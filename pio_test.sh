@@ -1,0 +1,1 @@
+pio test -vv -e esp32-s3-n16r8 --without-testing && echo "==== PRESS RESET ON BOARD NOW ====" && while true; do TARGET_PORT=$(ls /dev/ttyACM* 2>/dev/null | head -n 1); if [ ! -z "$TARGET_PORT" ]; then picocom $TARGET_PORT -b 115200 --noinit --imap crcrlf; fi; sleep 0.5; done
