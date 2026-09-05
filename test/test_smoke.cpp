@@ -54,6 +54,24 @@ void test_sensor_bounds(void)
     TEST_ASSERT_INT_WITHIN(2048, 2047, raw_reading);
 }
 
+#include <FS.h>
+#include <SPIFFS.h> // Or #include <LittleFS.h> depending on your preference
+
+void test_flash_partition_sizes(void)
+{
+    bool mounted = SPIFFS.begin(true);
+    TEST_ASSERT_TRUE_MESSAGE(mounted, "Failed to mount SPIFFS partition layer!");
+
+    size_t total_bytes = SPIFFS.totalBytes();
+
+    Serial.printf("\n   [PARTITION DIAGNOSTIC] Total File System Space: %d bytes\n", total_bytes);
+
+    // Verify it registers our massive custom ~6.8MB allotment (> 6,500,000 bytes)
+    TEST_ASSERT_GREATER_THAN_UINT32(6500000, total_bytes);
+
+    SPIFFS.end();
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -65,6 +83,7 @@ void setup()
     RUN_TEST(test_board_memory);
     RUN_TEST(test_psram_read_write);
     RUN_TEST(test_sensor_bounds);
+    RUN_TEST(test_flash_partition_sizes);
     UNITY_END();
 }
 
