@@ -1,77 +1,79 @@
 #include <Arduino.h>
+#include <PulseSensorPlayground.h>
 
-const int SENSOR_PIN = 1;
+// 1 = SERIAL_PLOTTER (Visual graph to see the waveform)
+// 0 = SERIAL_MONITOR (Text metrics for debugging values)
+#define USE_SERIAL_PLOTTER 1
 
-// Dynamic filtering metrics
-int signalMin = 4095;
-int signalMax = 0;
-int threshold = 2000;
-unsigned long lastBeatTime = 0;
-int bpm = 0;
-bool pulseDetected = false;
+const int PULSE_INPUT = 1; // Connect PulseSensor Signal (Purple) to GPIO 1 (ADC1_CH0)
+const int THRESHOLD = 550; // 550 works well since the library scales ESP32 input down to 10-bit internally
+
+PulseSensorPlayground pulseSensor;
+unsigned long ledOffTime = 0; // Tracks when to turn off the RGB LED
+bool ledIsOn = false;         // Tracks current LED state
 
 void setup()
 {
   Serial.begin(115200);
-  while (!Serial)
-  {
-    delay(10);
-  }
-  delay(1000);
 
-  analogSetPinAttenuation(SENSOR_PIN, ADC_11db);
+  // Initialize the sensor configuration
+  pulseSensor.analogInput(PULSE_INPUT);
+  pulseSensor.setThreshold(THRESHOLD);
+  pulseSensor.setSerial(Serial);
+
+  // Set output format conditionally
+  if (USE_SERIAL_PLOTTER)
+  {
+    pulseSensor.setOutputType(SERIAL_PLOTTER);
+  }
+
+  if (pulseSensor.begin())
+  {
+    Serial.println("System Active.");
+  }
+  else
+  {
+    Serial.println("Sensor Init Failed!");
+    while (1)
+      ;
+  }
 }
 
 void loop()
 {
-  int rawValue = analogRead(SENSOR_PIN);
-  unsigned long currentTime = millis();
-
-  // Dynamically calibrate baseline threshold envelopes every 2 seconds
-  static unsigned long lastCalibration = 0;
-  if (currentTime - lastCalibration > 2000)
+  // Check for software sample timing
+  if (pulseSensor.sawNewSample())
   {
-    threshold = (signalMax + signalMin) / 2;
-    signalMax = rawValue;
-    signalMin = rawValue;
-    lastCalibration = currentTime;
-  }
 
-  if (rawValue > signalMax)
-    signalMax = rawValue;
-  if (rawValue < signalMin)
-    signalMin = rawValue;
-
-  // Pulse Detection Logic
-  if (rawValue > (threshold + 15) && !pulseDetected)
-  { // Added a 15-unit dead-band to prevent noise triggers
-    if (currentTime - lastBeatTime > 280)
+    // 1. Plotter Debugging (Visualizes the pulse wave in VS Code)
+    if (USE_SERIAL_PLOTTER)
     {
-      pulseDetected = true;
-      unsigned long timeBetweenBeats = currentTime - lastBeatTime;
-      lastBeatTime = currentTime;
-      bpm = 60000 / timeBetweenBeats;
+      pulseSensor.outputSample();
+    }
+
+    // 2. Heartbeat Evaluation
+    if (pulseSensor.sawStartOfBeat())
+    {
+      int myBPM = pulseSensor.getBeatsPerMinute();
+      int myIBI = pulseSensor.getInterBeatIntervalMs();
+
+      // Onboard LED software flash: Turns bright GREEN on heartbeat
+      neopixelWrite(RGB_BUILTIN, 0, 150, 0);
+      ledIsOn = true;
+      ledOffTime = millis() + 250; // Set LED to turn off after 250ms
+
+      // Textual Debugging (Switch USE_SERIAL_PLOTTER to 0 to view this cleanly)
+      if (!USE_SERIAL_PLOTTER)
+      {
+        Serial.printf("♥ Beat! BPM: %d | IBI: %d ms | Threshold Baseline: %d\n", myBPM, myIBI, THRESHOLD);
+      }
     }
   }
 
-  if (rawValue < threshold && pulseDetected)
+  // 3. Handle turning the LED off after the pulse flash duration has elapsed
+  if (ledIsOn && millis() > ledOffTime)
   {
-    pulseDetected = false;
+    neopixelWrite(RGB_BUILTIN, 0, 0, 0); // Off
+    ledIsOn = false;
   }
-
-  // CRITICAL FIX: Only print to the screen every 40ms to completely clear the USB interface bottleneck
-  static unsigned long lastPrintTime = 0;
-  if (currentTime - lastPrintTime >= 40)
-  {
-    lastPrintTime = currentTime;
-
-    // Stream raw CSV integers (Ultra-lightweight formatting)
-    Serial.print(rawValue);
-    Serial.print(",");
-    Serial.print(threshold);
-    Serial.print(",");
-    Serial.println(bpm);
-  }
-
-  delay(5); // Internal oversampling speed
 }
