@@ -1,79 +1,30 @@
 #include <Arduino.h>
-#include <PulseSensorPlayground.h>
+#include <USB.h>     // Found via path mapping
+#include <USBMIDI.h> // Found via path mapping
 
-// 1 = SERIAL_PLOTTER (Visual graph to see the waveform)
-// 0 = SERIAL_MONITOR (Text metrics for debugging values)
-#define USE_SERIAL_PLOTTER 1
-
-const int PULSE_INPUT = 1; // Connect PulseSensor Signal (Purple) to GPIO 1 (ADC1_CH0)
-const int THRESHOLD = 550; // 550 works well since the library scales ESP32 input down to 10-bit internally
-
-PulseSensorPlayground pulseSensor;
-unsigned long ledOffTime = 0; // Tracks when to turn off the RGB LED
-bool ledIsOn = false;         // Tracks current LED state
+// Initialize the native Espressif MIDI interface
+USBMIDI DeviceMIDI;
 
 void setup()
 {
   Serial.begin(115200);
 
-  // Initialize the sensor configuration
-  pulseSensor.analogInput(PULSE_INPUT);
-  pulseSensor.setThreshold(THRESHOLD);
-  pulseSensor.setSerial(Serial);
+  // Configure the USB hardware device properties
+  USB.productName("ESP32-S3 Pulse MIDI");
 
-  // Set output format conditionally
-  if (USE_SERIAL_PLOTTER)
-  {
-    pulseSensor.setOutputType(SERIAL_PLOTTER);
-  }
+  // Initialize the native MIDI protocol handler
+  DeviceMIDI.begin();
 
-  if (pulseSensor.begin())
-  {
-    Serial.println("System Active.");
-  }
-  else
-  {
-    Serial.println("Sensor Init Failed!");
-    while (1)
-      ;
-  }
+  // Start up the core hardware USB controller
+  USB.begin();
 }
 
 void loop()
 {
-  // Check for software sample timing
-  if (pulseSensor.sawNewSample())
-  {
+  // Simple Hello World MIDI event sequence
+  DeviceMIDI.noteOn(60, 100, 1); // Play Middle C
+  delay(200);
 
-    // 1. Plotter Debugging (Visualizes the pulse wave in VS Code)
-    if (USE_SERIAL_PLOTTER)
-    {
-      pulseSensor.outputSample();
-    }
-
-    // 2. Heartbeat Evaluation
-    if (pulseSensor.sawStartOfBeat())
-    {
-      int myBPM = pulseSensor.getBeatsPerMinute();
-      int myIBI = pulseSensor.getInterBeatIntervalMs();
-
-      // Onboard LED software flash: Turns bright GREEN on heartbeat
-      neopixelWrite(RGB_BUILTIN, 0, 150, 0);
-      ledIsOn = true;
-      ledOffTime = millis() + 250; // Set LED to turn off after 250ms
-
-      // Textual Debugging (Switch USE_SERIAL_PLOTTER to 0 to view this cleanly)
-      if (!USE_SERIAL_PLOTTER)
-      {
-        Serial.printf("♥ Beat! BPM: %d | IBI: %d ms | Threshold Baseline: %d\n", myBPM, myIBI, THRESHOLD);
-      }
-    }
-  }
-
-  // 3. Handle turning the LED off after the pulse flash duration has elapsed
-  if (ledIsOn && millis() > ledOffTime)
-  {
-    neopixelWrite(RGB_BUILTIN, 0, 0, 0); // Off
-    ledIsOn = false;
-  }
+  DeviceMIDI.noteOff(60, 100, 1);
+  delay(800);
 }
