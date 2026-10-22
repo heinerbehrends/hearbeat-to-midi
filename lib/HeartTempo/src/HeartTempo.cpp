@@ -45,10 +45,12 @@ void HeartTempo::onSensorMissing()
   state_ = HeartState::NoSensor;
   candidates_.clear();
   invalidRun_ = 0;
+  lastAccepted_ = false;
 }
 
 void HeartTempo::onReading(int hr, uint32_t nowMs)
 {
+  lastAccepted_ = false;
   if (hr < cfg_.minBpm || hr > cfg_.maxBpm)
   {
     if (++invalidRun_ >= cfg_.invalidToNoFinger)
@@ -80,6 +82,7 @@ void HeartTempo::onReading(int hr, uint32_t nowMs)
     history_.push(hr, cfg_.historySize);
     candidates_.clear();
     smooth(hr, nowMs);
+    lastAccepted_ = true;
     return;
   }
   // Rejected. If rejections keep agreeing with each other, the heart rate really changed.
@@ -99,6 +102,7 @@ bool HeartTempo::tryConsensus(float hr, uint32_t nowMs)
       history_.push(candidates_.v[i], cfg_.historySize);
   candidates_.clear();
   smooth(mean, nowMs);
+  lastAccepted_ = true;
   return true;
 }
 
@@ -110,6 +114,21 @@ void HeartTempo::smooth(float hr, uint32_t nowMs)
   lastSmoothMs_ = nowMs;
 }
 
+void HeartTempo::setRate(float maxChangePerBeat, float tauSec)
+{
+  cfg_.maxChangePerBeat = maxChangePerBeat;
+  cfg_.tauSec = tauSec;
+}
+
+float HeartTempo::target() const
+{
+  if (feedback_ < 0)
+    return std::min(estimate_, std::max(estimate_ - cfg_.feedbackOffsetBpm, cfg_.steerLowBpm));
+  if (feedback_ > 0)
+    return std::max(estimate_, std::min(estimate_ + cfg_.feedbackOffsetBpm, cfg_.steerHighBpm));
+  return estimate_;
+}
+
 float HeartTempo::update(uint32_t nowMs)
 {
   float dt = updated_ ? (nowMs - lastUpdateMs_) / 1000.0f : 0;
@@ -118,8 +137,9 @@ float HeartTempo::update(uint32_t nowMs)
 
   if (state_ == HeartState::Locked)
   {
-    float step = cfg_.maxSlewBpmPerSec * dt;
-    tempo_ += std::max(-step, std::min(step, estimate_ - tempo_));
+    float beats = tempo_ / 60 * dt;
+    float step = tempo_ * cfg_.maxChangePerBeat * beats;
+    tempo_ += std::max(-step, std::min(step, target() - tempo_));
   }
   return tempo_;
 }

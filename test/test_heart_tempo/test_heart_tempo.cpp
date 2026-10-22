@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <HeartTempo.h>
+#include <Switch3.h>
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -89,11 +90,12 @@ void test_sustained_change_is_followed(void)
   TEST_ASSERT_FLOAT_WITHIN(0.5, 100, ht.tempo());
 }
 
-void test_tempo_never_moves_faster_than_slew_limit(void)
+void test_tempo_change_stays_below_perception_threshold(void)
 {
   HeartTempo ht;
   pollMany(ht, 70, 60);
-  float prev = ht.tempo();
+  float start = ht.tempo();
+  float prev = start;
   for (int i = 0; i < 40; i++)
   {
     ht.onReading(150, now);
@@ -101,10 +103,14 @@ void test_tempo_never_moves_faster_than_slew_limit(void)
     {
       now += 1000;
       float t = ht.update(now);
-      TEST_ASSERT_TRUE(t - prev <= 1.0f + 1e-4f);
+      float beats = prev / 60; // 1 s worth of beats
+      // Holds until 3 readings agree on the jump, then only rises, never too fast
+      TEST_ASSERT_TRUE(t >= prev);
+      TEST_ASSERT_TRUE((t - prev) / prev <= 0.0015f * beats * 1.001f);
       prev = t;
     }
   }
+  TEST_ASSERT_TRUE(prev > start + 10);
 }
 
 void test_short_gaps_keep_lock(void)
@@ -153,6 +159,142 @@ void test_sensor_missing_holds_tempo(void)
   TEST_ASSERT_EQUAL_FLOAT(held, ht.tempo());
 }
 
+void test_last_reading_flag_follows_each_reading(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 2);
+  TEST_ASSERT_FALSE(ht.lastReadingAccepted()); // acquiring
+  poll(ht, 70);
+  TEST_ASSERT_TRUE(ht.lastReadingAccepted()); // the locking reading counts
+  pollMany(ht, 70, 10);
+
+  poll(ht, INVALID);
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+  TEST_ASSERT_FALSE(ht.lastReadingAccepted());
+  poll(ht, 71);
+  TEST_ASSERT_TRUE(ht.lastReadingAccepted());
+
+  poll(ht, 130); // rejected by the gate
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+  TEST_ASSERT_FALSE(ht.lastReadingAccepted());
+  poll(ht, 70);
+  TEST_ASSERT_TRUE(ht.lastReadingAccepted());
+}
+
+void test_feedback_steers_and_returns(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 60);
+  ht.setFeedback(-1);
+  pollMany(ht, 70, 30); // 2 minutes
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 65, ht.tempo());
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 70, ht.heartRate()); // only the target moves
+
+  ht.setFeedback(0);
+  pollMany(ht, 70, 30);
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 70, ht.tempo());
+
+  ht.setFeedback(1);
+  pollMany(ht, 70, 30);
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 75, ht.tempo());
+}
+
+static float steeredTarget(int hr, int direction)
+{
+  HeartTempo ht;
+  pollMany(ht, hr, 120); // 8 minutes: the estimate has settled on hr
+  ht.setFeedback(direction);
+  return ht.target();
+}
+
+void test_feedback_clamps_without_pushing_against_the_switch(void)
+{
+  TEST_ASSERT_FLOAT_WITHIN(0.1, 55, steeredTarget(58, -1));
+  TEST_ASSERT_FLOAT_WITHIN(0.1, 50, steeredTarget(50, -1));
+  TEST_ASSERT_FLOAT_WITHIN(0.1, 130, steeredTarget(128, 1));
+  TEST_ASSERT_FLOAT_WITHIN(0.1, 135, steeredTarget(135, 1));
+}
+
+void test_feedback_glide_stays_below_perception_threshold(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 60);
+  ht.setFeedback(1);
+  float prev = ht.tempo();
+  for (int s = 0; s < 60; s++)
+  {
+    now += 1000;
+    float t = ht.update(now);
+    TEST_ASSERT_TRUE((t - prev) / prev <= 0.0015f * (prev / 60) * 1.001f);
+    prev = t;
+  }
+}
+
+void test_feedback_does_nothing_until_locked(void)
+{
+  HeartTempo ht;
+  ht.setFeedback(1);
+  pollMany(ht, INVALID, 15);
+  TEST_ASSERT_EQUAL_FLOAT(90, ht.tempo());
+}
+
+void test_rate_change_is_continuous_and_applies(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 60);
+  float before = ht.tempo();
+  ht.setRate(0.004f, 12); // fast preset
+  TEST_ASSERT_EQUAL_FLOAT(before, ht.tempo());
+
+  // A step to 100 now glides at up to 0.4 %/beat: well past what medium allows in 20 s
+  pollMany(ht, 100, 5);
+  float fastTempo = ht.tempo();
+
+  HeartTempo medium;
+  pollMany(medium, 70, 60);
+  pollMany(medium, 100, 5);
+  TEST_ASSERT_TRUE(fastTempo > medium.tempo() + 2);
+}
+
+void test_switch_first_read_is_immediate(void)
+{
+  Switch3 sw(30);
+  TEST_ASSERT_TRUE(sw.update(true, false, 0));
+  TEST_ASSERT_EQUAL(-1, sw.position());
+}
+
+void test_switch_ignores_bounce(void)
+{
+  Switch3 sw(30);
+  sw.update(false, false, 0);
+  // Contact chatters while closing
+  TEST_ASSERT_FALSE(sw.update(false, true, 5));
+  TEST_ASSERT_FALSE(sw.update(false, false, 10));
+  TEST_ASSERT_FALSE(sw.update(false, true, 15));
+  TEST_ASSERT_FALSE(sw.update(false, true, 40));
+  TEST_ASSERT_EQUAL(0, sw.position());
+  TEST_ASSERT_TRUE(sw.update(false, true, 45)); // stable for 30 ms
+  TEST_ASSERT_EQUAL(1, sw.position());
+}
+
+void test_switch_flip_across_centre_reports_only_the_end(void)
+{
+  Switch3 sw(30);
+  sw.update(true, false, 0);
+  sw.update(false, false, 100); // passing through the centre for 10 ms
+  sw.update(false, true, 110);
+  TEST_ASSERT_EQUAL(-1, sw.position());
+  TEST_ASSERT_TRUE(sw.update(false, true, 140));
+  TEST_ASSERT_EQUAL(1, sw.position());
+}
+
+void test_switch_both_closed_reads_centre(void)
+{
+  Switch3 sw(30);
+  sw.update(true, true, 0);
+  TEST_ASSERT_EQUAL(0, sw.position());
+}
+
 // Real readings captured from the sensor, finger on, 4 s polling
 void test_recorded_session_locks_and_ignores_spike(void)
 {
@@ -173,11 +315,21 @@ static void runTests()
   RUN_TEST(test_disagreeing_readings_do_not_lock);
   RUN_TEST(test_single_spike_is_ignored);
   RUN_TEST(test_sustained_change_is_followed);
-  RUN_TEST(test_tempo_never_moves_faster_than_slew_limit);
+  RUN_TEST(test_tempo_change_stays_below_perception_threshold);
   RUN_TEST(test_short_gaps_keep_lock);
   RUN_TEST(test_finger_off_holds_tempo);
   RUN_TEST(test_finger_back_needs_agreement_again);
   RUN_TEST(test_sensor_missing_holds_tempo);
+  RUN_TEST(test_last_reading_flag_follows_each_reading);
+  RUN_TEST(test_feedback_steers_and_returns);
+  RUN_TEST(test_feedback_clamps_without_pushing_against_the_switch);
+  RUN_TEST(test_feedback_glide_stays_below_perception_threshold);
+  RUN_TEST(test_feedback_does_nothing_until_locked);
+  RUN_TEST(test_rate_change_is_continuous_and_applies);
+  RUN_TEST(test_switch_first_read_is_immediate);
+  RUN_TEST(test_switch_ignores_bounce);
+  RUN_TEST(test_switch_flip_across_centre_reports_only_the_end);
+  RUN_TEST(test_switch_both_closed_reads_centre);
   RUN_TEST(test_recorded_session_locks_and_ignores_spike);
   UNITY_END();
 }
@@ -186,11 +338,14 @@ static void runTests()
 void setup()
 {
   Serial.begin(115200);
-  delay(2000);
-  runTests();
 }
 
-void loop() {}
+// Repeat the run, so a monitor opened at any time catches a complete one.
+void loop()
+{
+  delay(5000);
+  runTests();
+}
 #else
 int main()
 {

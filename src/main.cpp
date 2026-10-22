@@ -2,7 +2,9 @@
 //
 // Core 0: sensor task polls the SEN0344 every 4 s and runs HeartTempo.
 // Core 1: clock task sends 24 PPQN MIDI clock at the current tempo, always.
-//         loop() drives the status LED.
+//         loop() reads the switches and drives the status LED.
+//
+// Settings to tweak live in include/Settings.h.
 #include <Arduino.h>
 #include <USB.h>
 #include <USBMIDI.h>
@@ -10,18 +12,13 @@
 #include <atomic>
 #include <DFRobot_BloodOxygen_S.h>
 #include <HeartTempo.h>
+#include <Switch3.h>
+#include <Settings.h>
 
-// Sensor wiring found with the diag probe
-static const int SENSOR_SDA = 17;
-static const int SENSOR_SCL = 9;
+using namespace settings;
+
 static const uint8_t SENSOR_ADDR = 0x57;
-static const uint32_t SENSOR_POLL_MS = 4000;
 static const uint32_t TEMPO_UPDATE_MS = 100;
-
-// Onboard RGB LED: GPIO48 on most DevKitC-1 boards, GPIO38 on v1.1
-static const int LED_PIN = 48;
-static const uint8_t LED_LEVEL = 32;
-static const uint32_t BEAT_FLASH_MS = 80;
 
 static const int PPQN = 24;
 static const uint8_t MIDI_CLOCK = 0xF8;
@@ -33,10 +30,39 @@ DFRobot_BloodOxygen_S_I2C sensor(&Wire, SENSOR_ADDR);
 static std::atomic<uint32_t> clockIntervalUs{0};
 static std::atomic<uint32_t> clockTicks{0};
 static std::atomic<HeartState> heartState{HeartState::NoFinger};
+static std::atomic<bool> readingOk{false};
+static std::atomic<int> feedbackSwitch{0}; // -1 = −, 0 = follow, +1 = +
+static std::atomic<int> rateSwitch{0};     // -1 = slow, 0 = medium, +1 = fast
 
 static uint32_t intervalFor(float bpm)
 {
   return (uint32_t)(60e6f / (bpm * PPQN));
+}
+
+static const char *stateName(HeartState s)
+{
+  switch (s)
+  {
+  case HeartState::NoSensor:
+    return "NoSensor";
+  case HeartState::NoFinger:
+    return "NoFinger";
+  case HeartState::Acquiring:
+    return "Acquiring";
+  case HeartState::Locked:
+    return "Locked";
+  }
+  return "?";
+}
+
+static const char *feedbackName(int pos)
+{
+  return pos < 0 ? "minus" : pos > 0 ? "plus" : "follow";
+}
+
+static const RatePreset &ratePreset(int pos)
+{
+  return pos < 0 ? RATE_SLOW : pos > 0 ? RATE_FAST : RATE_MEDIUM;
 }
 
 static bool sensorPresent()
@@ -69,13 +95,33 @@ static void clockTask(void *)
 
 static void sensorTask(void *)
 {
-  HeartTempo heartTempo;
+  HeartTempo heartTempo(heartTempoConfig());
+  HeartState lastState = heartTempo.state();
+  int appliedFeedback = 99, appliedRate = 99; // force a log line at boot
   bool collecting = false;
   uint32_t lastPoll = millis() - SENSOR_POLL_MS;
 
   for (;;)
   {
     uint32_t now = millis();
+
+    // Plain text lines are shown as-is by serial plotters
+    int fb = feedbackSwitch.load();
+    if (fb != appliedFeedback)
+    {
+      Serial.printf("feedback: %s\r\n", feedbackName(fb));
+      heartTempo.setFeedback(fb);
+      appliedFeedback = fb;
+    }
+    int rate = rateSwitch.load();
+    if (rate != appliedRate)
+    {
+      const RatePreset &p = ratePreset(rate);
+      Serial.printf("rate: %s (%.3f %%/beat, tau %.0f s)\r\n", p.name, p.maxChangePerBeat * 100, p.tauSec);
+      heartTempo.setRate(p.maxChangePerBeat, p.tauSec);
+      appliedRate = rate;
+    }
+
     if (now - lastPoll >= SENSOR_POLL_MS)
     {
       lastPoll = now;
@@ -97,13 +143,21 @@ static void sensorTask(void *)
         heartTempo.onReading(hr, now);
       }
       heartState.store(heartTempo.state());
+      readingOk.store(heartTempo.lastReadingAccepted());
+
+      if (heartTempo.state() != lastState)
+      {
+        Serial.printf("state: %s -> %s\r\n", stateName(lastState), stateName(heartTempo.state()));
+        lastState = heartTempo.state();
+      }
 
       // Serial-plotter format, see diag/sensor_probe.cpp
       Serial.print(">");
       if (hr > 0)
         Serial.printf("Raw:%d,", hr);
-      Serial.printf("HR:%.1f,Tempo:%.2f,State:%d\r\n", heartTempo.heartRate(), heartTempo.tempo(),
-                    (int)heartTempo.state());
+      Serial.printf("HR:%.1f,Target:%.1f,Tempo:%.2f,State:%d,Ok:%d,Fb:%d,Rate:%d\r\n", heartTempo.heartRate(),
+                    heartTempo.target(), heartTempo.tempo(), (int)heartTempo.state(),
+                    (int)heartTempo.lastReadingAccepted(), fb, rate);
     }
 
     clockIntervalUs.store(intervalFor(heartTempo.update(now)));
@@ -113,8 +167,7 @@ static void sensorTask(void *)
 
 void setup()
 {
-  Serial.begin(115200);
-  Serial.setTxTimeoutMs(0); // never stall when no serial monitor is attached
+  Serial.begin(115200); // hardware UART (COM port), see platformio.ini
 
   USB.productName("ESP32-S3 Pulse MIDI");
   DeviceMIDI.begin();
@@ -123,19 +176,32 @@ void setup()
   Wire.begin(SENSOR_SDA, SENSOR_SCL, 100000);
   Wire.setTimeOut(50);
 
-  clockIntervalUs.store(intervalFor(HeartTempoConfig().startBpm));
+  // Switch contacts pull to GND; an unconnected switch reads as centre
+  for (int pin : {FEEDBACK_PIN_MINUS, FEEDBACK_PIN_PLUS, RATE_PIN_SLOW, RATE_PIN_FAST})
+    pinMode(pin, INPUT_PULLUP);
+
+  clockIntervalUs.store(intervalFor(START_BPM));
   xTaskCreatePinnedToCore(clockTask, "clock", 4096, nullptr, configMAX_PRIORITIES - 2, nullptr, 1);
   xTaskCreatePinnedToCore(sensorTask, "sensor", 8192, nullptr, 2, nullptr, 0);
 }
 
-// Status LED: red blinking = no sensor, red = no finger, amber = acquiring,
-// green flash on each beat = locked and following the heart rate.
-void loop()
+static void readSwitches(uint32_t now)
+{
+  static Switch3 feedback(SWITCH_DEBOUNCE_MS), rate(SWITCH_DEBOUNCE_MS);
+  if (feedback.update(digitalRead(FEEDBACK_PIN_MINUS) == LOW, digitalRead(FEEDBACK_PIN_PLUS) == LOW, now))
+    feedbackSwitch.store(feedback.position());
+  if (rate.update(digitalRead(RATE_PIN_SLOW) == LOW, digitalRead(RATE_PIN_FAST) == LOW, now))
+    rateSwitch.store(rate.position());
+}
+
+// Status LED: red blinking = no sensor, red = no finger, amber = acquiring or
+// last reading missing/rejected, green flash on each beat = locked and the last
+// reading was accepted.
+static void updateLed(uint32_t now)
 {
   static uint32_t lastBeatTick = 0, beatAtMs = 0;
   static uint32_t lastColor = 0xFFFFFFFF;
 
-  uint32_t now = millis();
   uint32_t ticks = clockTicks.load();
   if (ticks / PPQN != lastBeatTick / PPQN)
     beatAtMs = now;
@@ -155,7 +221,13 @@ void loop()
     g = LED_LEVEL / 3;
     break;
   case HeartState::Locked:
-    g = now - beatAtMs < BEAT_FLASH_MS ? LED_LEVEL : LED_LEVEL / 8;
+    if (readingOk.load())
+      g = now - beatAtMs < BEAT_FLASH_MS ? LED_LEVEL : LED_LEVEL / 8;
+    else
+    {
+      r = LED_LEVEL;
+      g = LED_LEVEL / 3;
+    }
     break;
   }
 
@@ -165,5 +237,12 @@ void loop()
     rgbLedWrite(LED_PIN, r, g, b);
     lastColor = color;
   }
+}
+
+void loop()
+{
+  uint32_t now = millis();
+  readSwitches(now);
+  updateLed(now);
   delay(5);
 }

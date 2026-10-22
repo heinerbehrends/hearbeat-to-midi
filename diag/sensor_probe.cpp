@@ -6,9 +6,10 @@
 #include <Wire.h>
 #include <DFRobot_BloodOxygen_S.h>
 
-// Pins safe to probe on the N16R8 (skips USB 19/20, flash/PSRAM 26-37, strapping 0/3/45/46)
+// Pins safe to probe on the N16R8 (skips USB 19/20, flash/PSRAM 26-37, strapping 0/3/45/46,
+// and 43/44, the UART that Serial uses)
 static const uint8_t PINS[] = {1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-                               21, 38, 39, 40, 41, 42, 43, 44, 47, 48};
+                               21, 38, 39, 40, 41, 42, 47, 48};
 
 static int foundSda = -1, foundScl = -1, foundRx = -1, foundTx = -1;
 
@@ -77,7 +78,7 @@ static bool probeUART(const uint8_t *cand, int n)
 void setup()
 {
   Serial.begin(115200);
-  delay(3000); // give the host time to open the USB CDC port
+  delay(3000); // time to open the serial monitor after a reset
 }
 
 void loop()

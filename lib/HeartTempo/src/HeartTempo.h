@@ -1,7 +1,7 @@
 // Turns noisy heart rate readings into a slowly gliding clock tempo.
 // Pure C++ (no Arduino dependencies) so it can be tested off the board.
 //
-//   reading -> validate -> outlier gate -> smoothing -> slew limit -> tempo
+//   reading -> validate -> outlier gate -> smoothing -> feedback -> slew limit -> tempo
 //
 // The tempo never stops: it only moves while the reading is locked, and holds
 // its last value through gaps, finger-off and sensor loss.
@@ -30,7 +30,15 @@ struct HeartTempoConfig
   int invalidToNoFinger = 5;  // consecutive invalid readings before declaring finger-off
   float tauSec = 25;          // smoothing time constant of the heart rate estimate
   float maxDtSec = 10;        // cap on the smoothing step, so long gaps don't cause a jump
-  float maxSlewBpmPerSec = 1; // hard cap on how fast the clock tempo moves
+  // Hard cap on how fast the clock tempo moves, as a fraction of the tempo per
+  // beat. Listeners notice continuous drift from ~0.17-0.27% per beat (Madison &
+  // Merker 2004; Dahl & Granqvist 2003), so 0.15% stays just below that.
+  float maxChangePerBeat = 0.0015f;
+  // Feedback steering: the target sits this far below/above the heart rate...
+  float feedbackOffsetBpm = 5;
+  // ...but steering never takes it past these (it never pushes against the switch either)
+  float steerLowBpm = 55;
+  float steerHighBpm = 130;
 };
 
 class HeartTempo
@@ -45,9 +53,20 @@ public:
   // Advance the tempo glide; call regularly. Returns the clock tempo in BPM.
   float update(uint32_t nowMs);
 
+  // -1 = steer below the heart rate, 0 = follow, +1 = steer above.
+  void setFeedback(int direction) { feedback_ = direction < 0 ? -1 : direction > 0 ? 1 : 0; }
+  // Change glide speed and smoothing live; the tempo continues from where it is.
+  void setRate(float maxChangePerBeat, float tauSec);
+
   float tempo() const { return tempo_; }
   float heartRate() const { return estimate_; }
+  // Where the tempo is gliding to: the heart rate estimate with feedback applied.
+  float target() const;
+  int feedback() const { return feedback_; }
   HeartState state() const { return state_; }
+  // Whether the most recent reading was accepted. Goes false on any invalid or
+  // rejected reading, even while the lock (and so the tempo tracking) holds.
+  bool lastReadingAccepted() const { return lastAccepted_; }
 
 private:
   static const int kMaxBuf = 9;
@@ -72,6 +91,8 @@ private:
   Buf history_;    // accepted readings
   Buf candidates_; // readings waiting for agreement (acquiring, or rejected while locked)
   int invalidRun_ = 0;
+  bool lastAccepted_ = false;
+  int feedback_ = 0;
   float estimate_;
   float tempo_;
   bool smoothed_ = false;
