@@ -49,6 +49,32 @@ constexpr RatePreset RATE_FAST = {"fast", 0.004f, 12};
 // Ignore contact bounce shorter than this when a switch is flipped.
 constexpr uint32_t SWITCH_DEBOUNCE_MS = 30;
 
+// --- Transport switch: stop / run / run stepped -------------------------------
+// Third 8016, wired like the others. Left = stop, centre = run (tempo glides),
+// right = run stepped (tempo changes only every STEP_BEATS beats). Run is in the
+// centre so flipping between the two running modes never passes through stop.
+// Starting sends Song Position 0 + Start, so the DAW starts from the top in phase;
+// stop sends Stop. The MIDI clock keeps running either way.
+constexpr int TRANSPORT_PIN_STOP = 15;
+constexpr int TRANSPORT_PIN_STEPPED = 16;
+// false until the switch is wired (an unwired switch would read "run"): the
+// board's BOOT button then cycles stop -> run -> stepped instead. Don't hold BOOT
+// while the board resets, that enters download mode.
+constexpr bool TRANSPORT_SWITCH_INSTALLED = false;
+
+// Stepped mode: the clock tempo holds for this many beats (counted from Start) and
+// then jumps to wherever the glide has got to. 16 beats = 4 bars of 4/4.
+constexpr int STEP_BEATS = 16;
+
+// --- Tempo as MIDI CC (for REAPER) -----------------------------------------
+// REAPER doesn't follow MIDI clock tempo. The device also sends its tempo as a
+// 14-bit CC pair (value = bpm x 64: MSB on TEMPO_CC, LSB on TEMPO_CC + 32), read by
+// tools/reaper/heart_rate_tempo.lua. Keep these in sync with that script.
+constexpr bool TEMPO_CC_ENABLED = true;
+constexpr uint8_t TEMPO_CC_CHANNEL = 16; // 1-16
+constexpr uint8_t TEMPO_CC = 20;         // 0-31 (20 is undefined in the MIDI spec)
+constexpr uint32_t TEMPO_CC_RESEND_MS = 2000; // also resend unchanged, for late listeners
+
 // --- Heart rate filter -------------------------------------------------------
 constexpr float START_BPM = 90;          // clock tempo at power-on, before the first lock
 constexpr float VALID_MIN_BPM = 40;      // readings outside this range are ignored
@@ -112,5 +138,8 @@ static_assert(INVALID_TO_NO_FINGER >= 1 && MISSING_TO_NO_SENSOR >= 1, "counts mu
 static_assert(START_RETRY_AFTER_INVALID >= 1, "START_RETRY_AFTER_INVALID must be at least 1");
 static_assert(SENSOR_POLL_MS >= 1000, "polling faster than 1 s only re-reads the same value");
 static_assert(LED_LEVEL >= 3, "LED_LEVEL below 3 makes amber look red");
+static_assert(STEP_BEATS >= 1, "STEP_BEATS must be at least 1");
+static_assert(TEMPO_CC_CHANNEL >= 1 && TEMPO_CC_CHANNEL <= 16, "TEMPO_CC_CHANNEL must be 1-16");
+static_assert(TEMPO_CC <= 31, "TEMPO_CC must be 0-31 so that TEMPO_CC + 32 is its LSB");
 
 } // namespace settings

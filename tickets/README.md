@@ -9,7 +9,7 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 | 003 | [External WS2812D status LED on GPIO21](003-external-status-led.md) | todo | –            |
 | 004 | [Absolute clock tempo limits](004-absolute-tempo-limits.md)   | todo    | – (pairs with 001) |
 | 005 | [Valid-reading rate in the log](005-valid-reading-metric.md)  | backlog | –               |
-| 006 | [Stepwise tempo changes on musical boundaries](006-stepwise-tempo-changes.md) | backlog | 001, 002, 003, 004 |
+| 006 | [Stepped tempo mode and DAW transport](006-stepwise-tempo-changes.md) | done | 001, 002, 004 |
 | 007 | [5-pin DIN MIDI out](007-din-midi-out.md)                     | backlog | –               |
 | 008 | [BLE heart-rate input (Polar etc.)](008-ble-heart-rate-input.md) | backlog | –            |
 
@@ -27,7 +27,8 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 - **Invariants every ticket must keep:**
   - The MIDI clock never stops (clock task on core 1, starts at 90 BPM, holds through gaps).
   - The tempo only ever moves through the glide limit (`maxChangePerBeat`), so no control, preset or
-    state change causes an audible jump.
+    state change causes an audible jump. Exception: stepped mode (006) jumps on phrase boundaries,
+    by at most what the glide covered in that phrase.
 - File names: `NNN-short-name.md`, IDs never reused.
 
 ## Won't do / maybe later

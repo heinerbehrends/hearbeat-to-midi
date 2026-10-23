@@ -28,6 +28,15 @@ static const uint32_t TEMPO_UPDATE_MS = 100;
 
 static const int PPQN = 24;
 static const uint8_t MIDI_CLOCK = 0xF8;
+static const uint8_t MIDI_START = 0xFA;
+static const uint8_t MIDI_STOP = 0xFC;
+static const uint8_t MIDI_SONG_POSITION = 0xF2;
+static const int BOOT_BUTTON_PIN = 0;
+
+// Transport modes, matching the transport switch positions (Switch3: -1 / 0 / +1)
+static const int MODE_STOP = -1;
+static const int MODE_RUN = 0;
+static const int MODE_STEPPED = 1;
 
 USBMIDI DeviceMIDI(DEVICE_NAME);
 
@@ -38,6 +47,9 @@ static std::atomic<HeartState> heartState{HeartState::NoFinger};
 static std::atomic<bool> readingOk{false};
 static std::atomic<int> feedbackSwitch{0}; // -1 = −, 0 = follow, +1 = +
 static std::atomic<int> rateSwitch{0};     // -1 = slow, 0 = medium, +1 = fast
+static std::atomic<int> transportWanted{MODE_STOP}; // from the switch, applied by the clock task
+static std::atomic<int> transportMode{MODE_STOP};   // what the clock task has applied
+static std::atomic<uint32_t> clockSentIntervalUs{0}; // interval the clock actually uses (held in stepped mode)
 
 static uint32_t intervalFor(float bpm)
 {
@@ -67,6 +79,11 @@ static const char *stateName(HeartState s)
 static const char *feedbackName(int pos)
 {
   return pos < 0 ? "minus" : pos > 0 ? "plus" : "follow";
+}
+
+static const char *modeName(int mode)
+{
+  return mode == MODE_STOP ? "stop" : mode == MODE_RUN ? "run" : "stepped";
 }
 
 static const RatePreset &ratePreset(int pos)
@@ -112,14 +129,90 @@ static void i2cBegin()
   Wire.setTimeOut(50);
 }
 
+static bool hostListening()
+{
+  return tud_mounted() && !tud_suspended();
+}
+
+// Song Position Pointer is a 3-byte System Common message (USB-MIDI CIN 0x3)
+static void sendSongPositionZero()
+{
+  midiEventPacket_t p = {0x03, MIDI_SONG_POSITION, 0, 0};
+  DeviceMIDI.writePacket(&p);
+}
+
+// Called right after a clock tick, so the next tick (a full interval later) is
+// the first beat. Song Position is only honoured while stopped, which the DAW is
+// whenever we get here.
+static void sendStartFromTop()
+{
+  sendSongPositionZero();
+  DeviceMIDI.write(MIDI_START);
+}
+
+// Applies the wanted transport mode. Returns true when a Start was sent, i.e. the
+// next tick is beat 1.
+static bool handleTransport()
+{
+  static bool wasListening = false;
+  bool listening = hostListening();
+  bool wasRunning = transportMode.load() != MODE_STOP;
+  int wanted = transportWanted.load();
+  bool run = wanted != MODE_STOP;
+  bool started = false;
+
+  if (run && (!wasRunning || (listening && !wasListening)))
+  {
+    // Starting, or the host (re)connected while running: start it from the top
+    if (listening)
+      sendStartFromTop();
+    started = true;
+  }
+  else if (!run && wasRunning && listening)
+    DeviceMIDI.write(MIDI_STOP);
+  // run <-> stepped changes only the tempo mode, no transport messages
+
+  transportMode.store(wanted);
+  wasListening = listening;
+  return started;
+}
+
+static uint16_t tempoToCc(float bpm)
+{
+  return (uint16_t)std::min(std::max(std::lround(bpm * 64), 0L), 16383L);
+}
+
+// For DAWs that don't follow clock tempo (REAPER): send the tempo the clock is
+// actually using as a 14-bit CC pair when it changes, and every TEMPO_CC_RESEND_MS
+static void sendTempoCc(uint32_t intervalUs)
+{
+  static uint16_t lastSent = 0xFFFF;
+  static int64_t lastSentUs = 0;
+  uint16_t v = tempoToCc(60e6f / ((float)intervalUs * PPQN));
+  int64_t now = esp_timer_get_time();
+  if (!TEMPO_CC_ENABLED || !hostListening() || (v == lastSent && now - lastSentUs < TEMPO_CC_RESEND_MS * 1000LL))
+    return;
+  DeviceMIDI.controlChange(TEMPO_CC, v >> 7, TEMPO_CC_CHANNEL);
+  DeviceMIDI.controlChange(TEMPO_CC + 32, v & 0x7F, TEMPO_CC_CHANNEL);
+  lastSent = v;
+  lastSentUs = now;
+}
+
 // Advances a fixed phase by the current interval each tick, so tempo changes
-// take effect smoothly between ticks without resetting the beat.
+// take effect smoothly between ticks without resetting the beat. In stepped mode
+// the interval is held and only refreshed on every STEP_BEATS-th beat after Start.
 static void clockTask(void *)
 {
+  const uint32_t ticksPerStep = STEP_BEATS * PPQN;
   int64_t next = esp_timer_get_time();
+  uint32_t held = clockIntervalUs.load();
+  uint32_t tick = 0; // index of the next tick since Start (0 = beat 1)
   for (;;)
   {
-    uint32_t interval = clockIntervalUs.load();
+    if (transportMode.load() != MODE_STEPPED)
+      held = clockIntervalUs.load(); // gliding: follow the live tempo every tick
+    uint32_t interval = held;
+    clockSentIntervalUs.store(interval);
     next += interval;
     int64_t wait;
     while ((wait = next - esp_timer_get_time()) > 0)
@@ -134,8 +227,18 @@ static void clockTask(void *)
 
     // While nobody is listening (unplugged, host asleep) don't queue ticks: they
     // would all arrive at once when the host comes back
-    if (tud_mounted() && !tud_suspended() && DeviceMIDI.write(MIDI_CLOCK) == 0)
+    if (hostListening() && DeviceMIDI.write(MIDI_CLOCK) == 0)
       midiDrops.fetch_add(1);
+
+    // Step boundary: the tick just sent starts a new phrase, take the glide's
+    // current tempo for the intervals that follow
+    if (tick % ticksPerStep == 0)
+      held = clockIntervalUs.load();
+    tick++;
+
+    if (handleTransport())
+      tick = 0;
+    sendTempoCc(held);
   }
 }
 
@@ -144,6 +247,7 @@ static void sensorTask(void *)
   HeartTempo heartTempo(heartTempoConfig());
   HeartState lastState = heartTempo.state();
   int appliedFeedback = 99, appliedRate = 99; // force a log line at boot
+  int loggedMode = MODE_STOP;
   bool collecting = false;
   int failedPolls = 0, invalidPolls = 0;
   uint32_t lastPoll = millis() - SENSOR_POLL_MS;
@@ -174,6 +278,12 @@ static void sensorTask(void *)
       Serial.printf(" (%.3f %%/beat, tau %.0f s)\r\n", p.maxChangePerBeat * 100, p.tauSec);
       heartTempo.setRate(p.maxChangePerBeat, p.tauSec);
       appliedRate = rate;
+    }
+    int mode = transportMode.load();
+    if (mode != loggedMode)
+    {
+      Serial.printf("transport: %s -> %s\r\n", modeName(loggedMode), modeName(mode));
+      loggedMode = mode;
     }
 
     if (now - lastPoll >= SENSOR_POLL_MS)
@@ -212,13 +322,15 @@ static void sensorTask(void *)
       }
 
       // Serial-plotter format, see diag/sensor_probe.cpp. Raw = sensor value,
-      // HR = filtered estimate, Target = HR with feedback, Tempo = clock tempo.
+      // HR = filtered estimate, Target = HR with feedback, Tempo = glide tempo,
+      // Clock = tempo the clock sends (= Tempo, or held between steps in stepped mode).
       Serial.print(">");
       if (hr > 0)
         Serial.printf("Raw:%d,", hr);
-      Serial.printf("HR:%.1f,Target:%.1f,Tempo:%.2f,State:%d,Ok:%d,Fb:%d,Rate:%d,Drops:%u\r\n",
-                    heartTempo.heartRate(), heartTempo.target(), heartTempo.tempo(), (int)heartTempo.state(),
-                    (int)heartTempo.lastReadingAccepted(), fb, rate, (unsigned)midiDrops.load());
+      Serial.printf("HR:%.1f,Target:%.1f,Tempo:%.2f,Clock:%.2f,State:%d,Ok:%d,Fb:%d,Rate:%d,Mode:%d,Drops:%u\r\n",
+                    heartTempo.heartRate(), heartTempo.target(), heartTempo.tempo(),
+                    60e6f / ((float)clockSentIntervalUs.load() * PPQN), (int)heartTempo.state(),
+                    (int)heartTempo.lastReadingAccepted(), fb, rate, mode, (unsigned)midiDrops.load());
     }
 
     clockIntervalUs.store(intervalFor(heartTempo.update(now)));
@@ -239,10 +351,12 @@ void setup()
   i2cBegin();
 
   // Switch contacts pull to GND; an unconnected switch reads as centre
-  for (int pin : {FEEDBACK_PIN_MINUS, FEEDBACK_PIN_PLUS, RATE_PIN_SLOW, RATE_PIN_FAST})
+  for (int pin : {FEEDBACK_PIN_MINUS, FEEDBACK_PIN_PLUS, RATE_PIN_SLOW, RATE_PIN_FAST, TRANSPORT_PIN_STOP,
+                  TRANSPORT_PIN_STEPPED, BOOT_BUTTON_PIN})
     pinMode(pin, INPUT_PULLUP);
 
   clockIntervalUs.store(intervalFor(START_BPM));
+  clockSentIntervalUs.store(intervalFor(START_BPM));
   xTaskCreatePinnedToCore(clockTask, "clock", 4096, nullptr, configMAX_PRIORITIES - 2, nullptr, 1);
   xTaskCreatePinnedToCore(sensorTask, "sensor", 8192, nullptr, 2, nullptr, 0);
 }
@@ -254,6 +368,24 @@ static void readSwitches(uint32_t now)
     feedbackSwitch.store(feedback.position());
   if (rate.update(digitalRead(RATE_PIN_SLOW) == LOW, digitalRead(RATE_PIN_FAST) == LOW, now))
     rateSwitch.store(rate.position());
+
+  if (TRANSPORT_SWITCH_INSTALLED)
+  {
+    static Switch3 transport(SWITCH_DEBOUNCE_MS);
+    if (transport.update(digitalRead(TRANSPORT_PIN_STOP) == LOW, digitalRead(TRANSPORT_PIN_STEPPED) == LOW, now))
+      transportWanted.store(transport.position()); // -1 stop, 0 run, +1 stepped
+  }
+  else
+  {
+    // Stand-in until the switch is wired: each BOOT press cycles stop -> run -> stepped.
+    // A single contact uses Switch3's left input only: position -1 = pressed.
+    static Switch3 bootButton(SWITCH_DEBOUNCE_MS);
+    if (bootButton.update(digitalRead(BOOT_BUTTON_PIN) == LOW, false, now) && bootButton.position() < 0)
+    {
+      int m = transportWanted.load();
+      transportWanted.store(m == MODE_STOP ? MODE_RUN : m == MODE_RUN ? MODE_STEPPED : MODE_STOP);
+    }
+  }
 }
 
 // Status LED: red blinking = no sensor, red = no finger (tempo held, clock still

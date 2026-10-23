@@ -1,62 +1,57 @@
-# 006 – Stepwise tempo changes on musical boundaries
+# 006 – Stepped tempo mode and DAW transport
 
-**Status:** backlog – proposal
-**Depends on:** 001, 002, 003, 004
-**Estimate:** ~2 days (core stepping ½ d, transport + footswitch ½ d, cue LED ½ d, DAW testing ½ d)
+**Status:** done – firmware built and flashed; transport + stepped mode still to verify on hardware
+(BOOT stand-in) and with a DAW
+**Depends on:** 001, 002, 004
 
-## Acceptance criteria (draft)
+## Acceptance criteria
 
-### Stepping
-- [ ] [unit] In "stepwise" mode the clock tempo is constant for N beats (default N = 32 = 8 bars of 4/4)
-      and changes only on the boundary beat (tick count since Start a multiple of N × 24).
-- [ ] [unit] The next tempo is decided **4 beats before** the boundary (the current glide target with
-      001/004 applied) and does not change after that, so the performer cue (below) is never wrong.
-- [ ] [unit] Step size is capped (proposal: ≤ 2 % of tempo or ≤ 3 bpm per boundary, to tune); steps
-      smaller than 0.5 bpm are skipped (no change, no cue).
-- [ ] [unit] No step while not Locked; the tempo holds, as in glide mode.
-- [ ] [log] Text line on every step: `step: 72.0 -> 73.4 at beat 640`.
+### Transport switch (third Velleman 8016, ON-OFF-ON)
+- [ ] [hw] Wired on GPIO15 (stop) / GPIO16 (stepped), common to GND. Positions: left = **stop**,
+      centre = **run** (tempo glides), right = **run stepped**. Run is in the centre, so flipping between
+      the two running modes never passes through stop.
+- [ ] [hw] stop → run (or stepped): **Song Position 0** (F2 00 00) then **Start** (FA), sent right after
+      a clock tick, so the next tick is beat 1 and the DAW starts from the top in phase.
+- [ ] [hw] run ↔ stepped: no transport messages, only the tempo mode changes.
+- [ ] [hw] → stop: **Stop** (FC). The MIDI clock keeps running in every mode.
+- [ ] [hw] Switch already on at power-on, or USB (re)connects while running: SPP 0 + Start once the host
+      listens.
+- [ ] `TRANSPORT_SWITCH_INSTALLED = false` until wired (an unwired switch reads "run"); the BOOT button
+      then cycles stop → run → stepped.
+- [ ] [log] `transport: stop -> run` lines; plotter `Mode:<-1|0|1>`.
 
-### DAW sync (transport)
-- [ ] [hw] A momentary **footswitch** (to GND, internal pull-up, debounced) toggles transport:
-      first press sends **Song Position Pointer 0** (0xF2 0 0) then **MIDI Start** (0xFA) on the next
-      clock tick and resets the beat counter there; second press sends **MIDI Stop** (0xFC).
-- [ ] [hw] MIDI clock keeps running while stopped (the "clock never stops" rule still holds), so the DAW
-      keeps showing the current tempo; only the beat counter and stepping pause.
-- [ ] [hw] With a DAW synced to the device, its bar 1 starts on Start and tempo changes land exactly on
-      bar lines and nowhere else. Verify with at least the user's DAW.
-- [ ] [log] Text lines `transport: start` / `transport: stop`.
-
-### Performer sync (cue LED)
-- [ ] [hw] A second WS2812D-F8, **chained** to the status LED's DOUT (no extra GPIO), shows musical
-      position while transport runs:
-  - short dim white flash on every beat, brighter on each bar's downbeat (every 4 beats);
-  - during the **last 4 beats before a step**: flashes in the step's direction colour on each beat as a
-    count-in (**blue = slower, orange = faster**);
-  - on the boundary beat itself: one long flash in that colour.
-- [ ] [hw] While transport is stopped the cue LED is off, so "dark" = not running.
-- [ ] Beats per bar (4), N (32), count-in length (4), cap and colours are constants in one place.
+### Stepped mode
+- [ ] [hw] The clock tempo is constant for `STEP_BEATS` beats (default **16** = 4 bars of 4/4), counted
+      from Start, and changes only on the boundary beat.
+- [ ] [hw] At each boundary it jumps to the current glide tempo, so a step is what the glide covered in
+      that phrase: at most ~1.2 % (slow), ~2.4 % (medium), ~6.4 % (fast) per 16 beats.
+- [ ] [log] Plotter `Clock` holds while `Tempo` glides, and catches up on each boundary.
+- [ ] [hw] With a DAW synced via clock + SPP, tempo changes land on bar lines only.
+- [ ] [hw] REAPER (tempo via CC, `tools/reaper/heart_rate_tempo.lua`) changes tempo only on the
+      boundaries.
 
 ## Context
 
-The continuous glide is designed to be imperceptible. This alternative holds the tempo dead steady and
-changes it in small steps at phrase boundaries, as a DJ or band would. For that to work musically, the
-DAW and the performer must both know where the phrase boundaries are: the DAW through MIDI Start/Song
-Position, the performer through the cue LED's count-in.
+The glide is designed to be imperceptible. Stepped mode instead holds the tempo dead steady and changes it
+at phrase boundaries, as a band or DJ would. The DAW knows where the phrases are from Song Position +
+Start; performers count the 16 beats themselves (no cue light in this version).
+
+REAPER doesn't follow MIDI clock tempo at all (only SPP position / start / stop), so the device also sends
+its tempo as a 14-bit CC pair for the REAPER script. Stepped mode is the clean case for REAPER: it gets one
+exact tempo per phrase, so nothing can drift. Glide mode works too, but REAPER's tempo trails the clock by
+a few hundred ms and is never re-aligned.
 
 ## Notes / Design
 
-- The clock task already counts ticks (`clockTicks`); stepping needs a counter that resets on Start.
-  The clock task should apply both the Start reset and the new tempo on the tick itself, so the step lands
-  exactly on the boundary.
-- A step is a sudden change: the noticing threshold for steps is ~2–6 % (Drake & Botte 1993), much
-  higher than the ~0.15–0.27 %/beat for glides. Capping at ~2 % keeps steps subtle; on a phrase boundary
-  a noticeable step may also be wanted.
-- Mode selection: proposal is that the rate switch (002) gets a stepwise position, or that a long press on
-  the footswitch toggles glide / stepwise. Decide before implementing.
-- Footswitch: a standard momentary (non-latching) guitar-style footswitch on a 6.3 mm jack works; check
-  how DAWs react to Start while the clock is already running (expected: they start at bar 1).
+- The clock task owns the beat counter (reset when Start is sent) and the held interval; it refreshes the
+  held interval from the glide on every `STEP_BEATS × 24`-th tick.
+- A step is a sudden change; the noticing threshold for steps is ~2–6 % (Drake & Botte 1993), much higher
+  than ~0.15–0.27 %/beat for glides. Medium stays around that threshold, fast is deliberately audible.
+- Exception to the README invariant "tempo only moves through the glide limit": in stepped mode it jumps
+  on boundaries, by at most the glide over one phrase.
 
-## Out of scope
+## Out of scope / later
 
+- A cue LED (count-in before steps, beat flash): not needed while the interval is a fixed 16 beats.
 - Receiving clock/transport from the DAW (the device stays the clock master).
-- Count-in audio (click): the DAW can provide that from the Start position.
+- A selectable interval on the panel (it is `STEP_BEATS` in `include/Settings.h`).
