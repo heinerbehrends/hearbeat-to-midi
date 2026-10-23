@@ -1,24 +1,26 @@
 # 003 – External WS2812D status LED on GPIO21
 
-**Status:** todo
+**Status:** todo – firmware done (GPIO21, off at boot), hardware check pending
 **Depends on:** –
 
 ## Acceptance criteria
 
 - [ ] [hw] Status LED is driven on **GPIO21**; GPIO48 (onboard, disconnected on this clone by the open
       RGB solder jumper) is no longer used.
-- [ ] [hw] Colours match the states (existing logic in `loop()`):
+- [ ] [hw] Colours match the states (`updateLed()` in `src/main.cpp`):
       - **red blinking** (2 Hz, 250 ms on / 250 ms off) = NoSensor (unplug the sensor to check)
-      - **red steady** = NoFinger
-      - **amber** = Acquiring, or Locked but the last reading was missing/rejected
-      - **green dim, bright flash (80 ms) on every clock beat** = Locked and last reading accepted
+      - **red steady** = NoFinger (tempo held, clock still running)
+      - **amber** = Acquiring; with `LED_SHOW_EVERY_MISS = true` (testing) also Locked but the last
+        reading was missing/rejected
+      - **green steady** = Locked (and, with `LED_SHOW_EVERY_MISS`, last reading accepted)
+      - No beat flash: it can't be in phase with the DAW without MIDI Start, so it moves to 006.
 - [ ] [hw] Red and green are not swapped (WS2812D expects GRB); if they are, fix with
       `rgbLedWriteOrdered(..., LED_COLOR_ORDER_GRB, ...)` / the right order constant, not by swapping r/g
       in the state logic.
-- [ ] [hw] Brightness is low by default: steady states at about 1/16 of full scale (`LED_LEVEL` ≈ 16),
-      dim green ≈ 1/8 of that. Comfortable to look at from 50 cm in a dim room; one constant to change.
-- [ ] [hw] Beat flash stays in time with the DAW's beat indicator (no visible lag or jitter).
+- [ ] [hw] Brightness is low by default: about 1/16 of full scale (`LED_LEVEL` = 16 in
+      `include/Settings.h`). Comfortable to look at from 50 cm in a dim room; one constant to change.
 - [ ] [hw] LED stays dark/stable during boot and USB enumeration (no random colour burst lasting > 1 s).
+      Optional: 10 kΩ pull-down on DIN so it stays dark while the ESP is held in reset.
 - [ ] [log] No change to the log.
 
 ## Context
@@ -28,9 +30,9 @@ the enclosure replaces it.
 
 ## Notes / Design
 
-- Change `LED_PIN` to 21 and `LED_LEVEL` in `src/main.cpp`; `rgbLedWrite()` (RMT based, core 3.x) works
-  on any output GPIO.
-- `loop()` only writes when the colour changes – keep that, the RMT write is not free.
+- `LED_PIN`, `LED_LEVEL` and `LED_SHOW_EVERY_MISS` are in `include/Settings.h`; `rgbLedWrite()` (RMT
+  based, core 3.x) works on any output GPIO.
+- `updateLed()` only writes when the colour changes – keep that, the RMT write is not free.
 - GPIO21 is not a strapping pin and not used by USB (19/20) or the sensor (17/9).
 
 ## Hardware

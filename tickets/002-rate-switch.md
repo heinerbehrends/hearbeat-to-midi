@@ -1,6 +1,6 @@
 # 002 – Rate switch (slow / medium / fast presets)
 
-**Status:** todo
+**Status:** done – hardware check pending (switches not wired yet)
 **Depends on:** 001 (reuses the switch decoding/debounce helper)
 
 ## Acceptance criteria
@@ -16,7 +16,7 @@
       monotonically, never overshoots the target, and the step size drops to the slow limit.
 - [ ] [unit] Per preset, with a 70 → 100 HR step: every step obeys that preset's glide limit, and the
       time to get within 0.5 bpm of 100 is ordered fast < medium < slow.
-- [ ] [log] Plotter line gains `Rate:<0|1|2>`; text line `rate: medium -> fast` on each change and once
+- [ ] [log] Plotter line gains `Rate:<-1|0|1>` (slow/medium/fast); text line `rate: medium -> fast` on each change and once
       at boot.
 - [ ] Debounce and decoding are identical to 001 (same helper, same 30 ms).
 

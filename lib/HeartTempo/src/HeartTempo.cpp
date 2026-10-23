@@ -42,22 +42,37 @@ HeartTempo::HeartTempo(const HeartTempoConfig &cfg)
 
 void HeartTempo::onSensorMissing()
 {
+  lastAccepted_ = false;
+  // A failed poll or two (a bus glitch) is a gap like an invalid reading; only a
+  // run of them means the sensor is gone
+  if (++missingRun_ < cfg_.missingToNoSensor)
+  {
+    countInvalid();
+    return;
+  }
   state_ = HeartState::NoSensor;
   candidates_.clear();
   invalidRun_ = 0;
-  lastAccepted_ = false;
+}
+
+void HeartTempo::countInvalid()
+{
+  if (++invalidRun_ >= cfg_.invalidToNoFinger)
+  {
+    state_ = HeartState::NoFinger;
+    candidates_.clear();
+  }
 }
 
 void HeartTempo::onReading(int hr, uint32_t nowMs)
 {
   lastAccepted_ = false;
+  missingRun_ = 0;
   if (hr < cfg_.minBpm || hr > cfg_.maxBpm)
   {
-    if (++invalidRun_ >= cfg_.invalidToNoFinger)
-    {
-      state_ = HeartState::NoFinger;
-      candidates_.clear();
-    }
+    if (state_ == HeartState::NoSensor)
+      state_ = HeartState::NoFinger; // the sensor answers again, there's just no heart rate
+    countInvalid();
     return;
   }
   invalidRun_ = 0;
@@ -85,8 +100,10 @@ void HeartTempo::onReading(int hr, uint32_t nowMs)
     lastAccepted_ = true;
     return;
   }
-  // Rejected. If rejections keep agreeing with each other, the heart rate really changed.
-  tryConsensus(hr, nowMs);
+  // Rejected. If rejections keep agreeing with each other, or keep climbing or
+  // falling together, the heart rate really changed.
+  if (!tryConsensus(hr, nowMs))
+    acceptRamp(med, nowMs);
 }
 
 bool HeartTempo::tryConsensus(float hr, uint32_t nowMs)
@@ -96,9 +113,11 @@ bool HeartTempo::tryConsensus(float hr, uint32_t nowMs)
   if (candidates_.n < cfg_.agreeCount || candidates_.agreeing(cfg_.agreeTolBpm, &mean) < cfg_.agreeCount)
     return false;
 
+  // Seed the history with exactly the readings that agreed
+  float med = candidates_.median();
   history_.clear();
   for (int i = 0; i < candidates_.n; i++)
-    if (std::fabs(candidates_.v[i] - mean) <= 2 * cfg_.agreeTolBpm)
+    if (std::fabs(candidates_.v[i] - med) <= cfg_.agreeTolBpm)
       history_.push(candidates_.v[i], cfg_.historySize);
   candidates_.clear();
   smooth(mean, nowMs);
@@ -106,10 +125,45 @@ bool HeartTempo::tryConsensus(float hr, uint32_t nowMs)
   return true;
 }
 
+// A steady climb (e.g. exercise onset) outruns the gate's median, and its
+// readings are too spread out to agree. Accept it once the last agreeCount
+// rejections all lie beyond the median and each one continues the same way.
+bool HeartTempo::acceptRamp(float med, uint32_t nowMs)
+{
+  int k = cfg_.agreeCount;
+  if (k < 2 || candidates_.n < k)
+    return false;
+  const float *run = candidates_.v + candidates_.n - k;
+  float dir = run[k - 1] > run[0] ? 1 : -1;
+  for (int i = 0; i < k; i++)
+  {
+    if ((run[i] - med) * dir <= 0)
+      return false;
+    if (i > 0 && (run[i] - run[i - 1]) * dir <= 0)
+      return false;
+  }
+
+  float latest = run[k - 1];
+  history_.clear();
+  for (int i = 0; i < k; i++)
+    history_.push(run[i], cfg_.historySize);
+  candidates_.clear();
+  smooth(latest, nowMs);
+  lastAccepted_ = true;
+  return true;
+}
+
 void HeartTempo::smooth(float hr, uint32_t nowMs)
 {
-  float dt = smoothed_ ? std::min((nowMs - lastSmoothMs_) / 1000.0f, cfg_.maxDtSec) : cfg_.maxDtSec;
-  estimate_ += (1 - std::exp(-dt / cfg_.tauSec)) * (hr - estimate_);
+  // The first lock is a measured value: start the estimate there instead of
+  // easing in from startBpm (the tempo still glides there at the glide limit)
+  if (!smoothed_)
+    estimate_ = hr;
+  else
+  {
+    float dt = std::min((nowMs - lastSmoothMs_) / 1000.0f, cfg_.maxDtSec);
+    estimate_ += (1 - std::exp(-dt / cfg_.tauSec)) * (hr - estimate_);
+  }
   smoothed_ = true;
   lastSmoothMs_ = nowMs;
 }

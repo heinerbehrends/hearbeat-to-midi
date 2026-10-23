@@ -4,8 +4,8 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 
 | ID  | Title                                                        | Status  | Depends on      |
 | --- | ------------------------------------------------------------ | ------- | --------------- |
-| 001 | [Feedback switch (follow / − / +)](001-feedback-switch.md)    | todo    | –               |
-| 002 | [Rate switch (slow / medium / fast presets)](002-rate-switch.md) | todo | 001             |
+| 001 | [Feedback switch (follow / − / +)](001-feedback-switch.md)    | done    | –               |
+| 002 | [Rate switch (slow / medium / fast presets)](002-rate-switch.md) | done | 001             |
 | 003 | [External WS2812D status LED on GPIO21](003-external-status-led.md) | todo | –            |
 | 004 | [Absolute clock tempo limits](004-absolute-tempo-limits.md)   | todo    | – (pairs with 001) |
 | 005 | [Valid-reading rate in the log](005-valid-reading-metric.md)  | backlog | –               |
@@ -22,9 +22,8 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
     is pure logic (filter, steering, clamps, debounce decoding) belongs in `lib/` so it can be tested here.
   - **[log]** – visible in the serial-plotter log (`>Name:value,...` lines plus plain-text state lines).
   - **[hw]** – checked on the hardware: LED, switches, a DAW receiving the clock.
-- **Tuning values live in one place** (`HeartTempoConfig` / a presets table next to it in
-  `lib/HeartTempo/src/HeartTempo.h`, pin numbers at the top of `src/main.cpp`). Tickets name defaults;
-  changing a number later should be a one-line edit.
+- **Tuning values live in one place:** `include/Settings.h` (pins, presets, filter, LED). Tickets name
+  defaults; changing a number later should be a one-line edit.
 - **Invariants every ticket must keep:**
   - The MIDI clock never stops (clock task on core 1, starts at 90 BPM, holds through gaps).
   - The tempo only ever moves through the glide limit (`maxChangePerBeat`), so no control, preset or

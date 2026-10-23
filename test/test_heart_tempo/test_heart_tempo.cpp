@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <cmath>
 #include <HeartTempo.h>
 #include <Switch3.h>
 
@@ -57,8 +58,9 @@ void test_reacts_slowly(void)
 {
   HeartTempo ht;
   pollMany(ht, 70, 5); // 20 s after the first reading, 12 s after locking
-  // Less than 60% of the way from the 90 start to 70
-  TEST_ASSERT_TRUE(ht.tempo() > 78);
+  // The estimate starts at the measured value; the tempo only glides there
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 70, ht.heartRate());
+  TEST_ASSERT_TRUE(ht.tempo() > 85);
 }
 
 void test_disagreeing_readings_do_not_lock(void)
@@ -140,8 +142,46 @@ void test_finger_back_needs_agreement_again(void)
   pollMany(ht, INVALID, 5);
   poll(ht, 110);
   poll(ht, 75);
+  poll(ht, 95);
   TEST_ASSERT_EQUAL(HeartState::Acquiring, ht.state());
   TEST_ASSERT_FLOAT_WITHIN(0.5, 70, ht.tempo());
+  pollMany(ht, 75, 2); // 3 of the last 4 now agree
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+}
+
+void test_single_bus_glitch_keeps_lock(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 10);
+  ht.onSensorMissing();
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+  TEST_ASSERT_FALSE(ht.lastReadingAccepted());
+  poll(ht, 70);
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+  TEST_ASSERT_TRUE(ht.lastReadingAccepted());
+}
+
+void test_sensor_back_without_finger_is_no_finger(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 10);
+  for (int i = 0; i < 3; i++)
+    ht.onSensorMissing();
+  TEST_ASSERT_EQUAL(HeartState::NoSensor, ht.state());
+  poll(ht, INVALID);
+  TEST_ASSERT_EQUAL(HeartState::NoFinger, ht.state());
+}
+
+void test_steep_climb_is_tracked(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 60);
+  // Exercise onset: +6 bpm per reading, too steep for the gate and too spread to agree
+  for (int hr = 76; hr <= 112; hr += 6)
+    poll(ht, hr);
+  // Without ramp acceptance the estimate would still sit near 71
+  TEST_ASSERT_TRUE(ht.heartRate() > 85);
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
 }
 
 void test_sensor_missing_holds_tempo(void)
@@ -219,14 +259,20 @@ void test_feedback_glide_stays_below_perception_threshold(void)
 {
   HeartTempo ht;
   pollMany(ht, 70, 60);
-  ht.setFeedback(1);
-  float prev = ht.tempo();
-  for (int s = 0; s < 60; s++)
+  // Up, then straight across to minus: the glide limit holds in both directions
+  for (int dir : {1, -1})
   {
-    now += 1000;
-    float t = ht.update(now);
-    TEST_ASSERT_TRUE((t - prev) / prev <= 0.0015f * (prev / 60) * 1.001f);
-    prev = t;
+    ht.setFeedback(dir);
+    float start = ht.tempo();
+    float prev = start;
+    for (int s = 0; s < 60; s++)
+    {
+      now += 1000;
+      float t = ht.update(now);
+      TEST_ASSERT_TRUE(std::fabs(t - prev) / prev <= 0.0015f * (prev / 60) * 1.001f);
+      prev = t;
+    }
+    TEST_ASSERT_TRUE((prev - start) * dir > 1); // it did move toward the steered target
   }
 }
 
@@ -319,6 +365,9 @@ static void runTests()
   RUN_TEST(test_short_gaps_keep_lock);
   RUN_TEST(test_finger_off_holds_tempo);
   RUN_TEST(test_finger_back_needs_agreement_again);
+  RUN_TEST(test_single_bus_glitch_keeps_lock);
+  RUN_TEST(test_sensor_back_without_finger_is_no_finger);
+  RUN_TEST(test_steep_climb_is_tracked);
   RUN_TEST(test_sensor_missing_holds_tempo);
   RUN_TEST(test_last_reading_flag_follows_each_reading);
   RUN_TEST(test_feedback_steers_and_returns);

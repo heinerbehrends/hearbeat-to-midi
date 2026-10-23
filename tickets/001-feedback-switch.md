@@ -1,6 +1,6 @@
 # 001 – Feedback switch (follow / − / +)
 
-**Status:** todo
+**Status:** done – hardware check pending (switches not wired yet)
 **Depends on:** –
 
 ## Acceptance criteria
