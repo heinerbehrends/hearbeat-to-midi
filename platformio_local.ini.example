@@ -1,0 +1,13 @@
+; Machine-specific PlatformIO settings.
+; Copy this file to platformio_local.ini (not committed) and set the board's UART
+; port (CH343 converter, VID:PID 1A86:55D3) as `pio device list` shows it:
+;   Windows: COM4, COM7, ...
+;   Linux:   /dev/ttyACM0 (add yourself to the dialout group once)
+;   macOS:   /dev/cu.usbmodem...
+; Without platformio_local.ini, PlatformIO picks a port by itself, which can be
+; the wrong one when other serial devices are connected.
+
+[env:esp32-s3-n16r8]
+upload_port = COM4
+monitor_port = COM4
+test_port = COM4
