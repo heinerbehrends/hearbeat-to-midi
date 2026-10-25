@@ -341,6 +341,34 @@ void test_switch_both_closed_reads_centre(void)
   TEST_ASSERT_EQUAL(0, sw.position());
 }
 
+void test_high_junk_is_discarded_without_losing_the_finger(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 60);
+  float before = ht.heartRate();
+  // Sudden high readings that don't agree with each other: all discarded,
+  // and they don't count as missing readings either
+  for (int hr : {124, 140, 118, 150, 126, 160, 131})
+    poll(ht, hr);
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+  TEST_ASSERT_FALSE(ht.lastReadingAccepted());
+  TEST_ASSERT_FLOAT_WITHIN(0.01, before, ht.heartRate());
+  poll(ht, 71);
+  TEST_ASSERT_TRUE(ht.lastReadingAccepted());
+}
+
+void test_sudden_real_rise_above_100_gets_through(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 60);
+  // A real jump to 110 (no smooth series): held back until readings agree
+  pollMany(ht, 110, 2);
+  TEST_ASSERT_FLOAT_WITHIN(0.01, 70, ht.heartRate());
+  pollMany(ht, 110, 10);
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+  TEST_ASSERT_TRUE(ht.heartRate() > 80);
+}
+
 // Real readings captured from the sensor, finger on, 4 s polling
 void test_recorded_session_locks_and_ignores_spike(void)
 {
@@ -379,6 +407,8 @@ static void runTests()
   RUN_TEST(test_switch_ignores_bounce);
   RUN_TEST(test_switch_flip_across_centre_reports_only_the_end);
   RUN_TEST(test_switch_both_closed_reads_centre);
+  RUN_TEST(test_high_junk_is_discarded_without_losing_the_finger);
+  RUN_TEST(test_sudden_real_rise_above_100_gets_through);
   RUN_TEST(test_recorded_session_locks_and_ignores_spike);
   UNITY_END();
 }

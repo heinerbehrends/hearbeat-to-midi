@@ -75,7 +75,9 @@ void HeartTempo::onReading(int hr, uint32_t nowMs)
     countInvalid();
     return;
   }
-  invalidRun_ = 0;
+  invalidRun_ = 0; // the sensor sees a signal, even if we discard this value
+  if (!passesCaution(hr))
+    return;
 
   if (state_ != HeartState::Locked)
   {
@@ -104,6 +106,22 @@ void HeartTempo::onReading(int hr, uint32_t nowMs)
   // falling together, the heart rate really changed.
   if (!tryConsensus(hr, nowMs))
     acceptRamp(med, nowMs);
+}
+
+bool HeartTempo::passesCaution(float hr)
+{
+  bool smooth = haveKept_ && std::fabs(hr - lastKept_) <= cfg_.cautionStepBpm;
+  if (hr > cfg_.cautionAboveBpm && !smooth)
+  {
+    highRun_.push(hr, cfg_.agreeCount + 1);
+    float mean;
+    if (highRun_.n < cfg_.agreeCount || highRun_.agreeing(cfg_.agreeTolBpm, &mean) < cfg_.agreeCount)
+      return false;
+  }
+  highRun_.clear();
+  haveKept_ = true;
+  lastKept_ = hr;
+  return true;
 }
 
 bool HeartTempo::tryConsensus(float hr, uint32_t nowMs)

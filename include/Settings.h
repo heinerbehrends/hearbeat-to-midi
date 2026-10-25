@@ -76,7 +76,7 @@ constexpr uint8_t TEMPO_CC = 20;         // 0-31 (20 is undefined in the MIDI sp
 constexpr uint32_t TEMPO_CC_RESEND_MS = 2000; // also resend unchanged, for late listeners
 
 // --- Heart rate filter -------------------------------------------------------
-constexpr float START_BPM = 90;          // clock tempo at power-on, before the first lock
+constexpr float START_BPM = 70;          // clock tempo at power-on, before the first lock
 constexpr float VALID_MIN_BPM = 40;      // readings outside this range are ignored
 constexpr float VALID_MAX_BPM = 180;
 constexpr int INVALID_TO_NO_FINGER = 5;  // readings without heart rate in a row (x 4 s) before "no finger"
@@ -85,6 +85,11 @@ constexpr int MISSING_TO_NO_SENSOR = 3;  // polls without an answer in a row bef
 constexpr int AGREE_COUNT = 3;           // readings of the last 4 that must agree to lock
 constexpr float AGREE_TOL_BPM = 4;       // ...within this distance of each other's median
 constexpr float GATE_FLOOR_BPM = 8;      // while locked, readings this close to recent ones always pass
+// The sensor's typical junk is a high reading out of nowhere: readings above
+// CAUTION_ABOVE_BPM only count when within CAUTION_STEP_BPM of the previous kept
+// reading (a smooth series), or once AGREE_COUNT of them in a row agree.
+constexpr float CAUTION_ABOVE_BPM = 100;
+constexpr float CAUTION_STEP_BPM = 8;
 
 // --- Sensor --------------------------------------------------------------------
 constexpr int SENSOR_SDA = 17;
@@ -95,6 +100,13 @@ constexpr uint32_t SENSOR_POLL_MS = 4000;
 // A sensor that reset unnoticed stops measuring: re-send "start" after this many
 // readings in a row without heart rate (keep it below INVALID_TO_NO_FINGER).
 constexpr int START_RETRY_AFTER_INVALID = 4;
+// Only trust the heart rate while the sensor also reports a valid SpO2 (result
+// byte 1). When the sensor is disturbed it drops SpO2 but keeps reporting a
+// drifting, too-high heart rate; this treats those readings as missing.
+constexpr bool REQUIRE_SPO2_VALID = true;
+// Debug: also log the sensor's full 8-byte result as hex on every poll
+// (byte 0 = SpO2, 1 = SpO2 valid, 2-5 = heart rate, 7 = heart rate present).
+constexpr bool LOG_RAW_SENSOR_BYTES = true;
 
 // --- Status LED ------------------------------------------------------------------
 // 21 = external WS2812D-F8. 48 = onboard LED (needs the RGB solder jumper bridged).
@@ -117,6 +129,8 @@ inline HeartTempoConfig heartTempoConfig()
   c.agreeCount = AGREE_COUNT;
   c.agreeTolBpm = AGREE_TOL_BPM;
   c.gateFloorBpm = GATE_FLOOR_BPM;
+  c.cautionAboveBpm = CAUTION_ABOVE_BPM;
+  c.cautionStepBpm = CAUTION_STEP_BPM;
   c.maxChangePerBeat = RATE_MEDIUM.maxChangePerBeat;
   c.tauSec = RATE_MEDIUM.tauSec;
   c.feedbackOffsetBpm = FEEDBACK_OFFSET_BPM;

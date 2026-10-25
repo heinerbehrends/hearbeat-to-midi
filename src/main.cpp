@@ -119,7 +119,12 @@ static bool sensorReadHeartRate(int *hr)
   for (uint8_t &x : b)
     x = Wire.read();
   uint32_t v = (uint32_t)b[2] << 24 | (uint32_t)b[3] << 16 | (uint32_t)b[4] << 8 | b[5];
-  *hr = v == 0 || v > 1000 ? -1 : (int)v;
+  // Byte 1 is the SpO2-valid flag; the heart rate it reports while that is 0 has
+  // proven to be junk (a drifting series after the sensor is disturbed)
+  bool quality = !REQUIRE_SPO2_VALID || b[1] != 0;
+  *hr = v == 0 || v > 1000 || !quality ? -1 : (int)v;
+  if (LOG_RAW_SENSOR_BYTES)
+    Serial.printf("raw: %02X %02X %02X %02X %02X %02X %02X %02X\r\n", b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
   return true;
 }
 

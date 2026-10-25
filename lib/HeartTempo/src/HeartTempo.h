@@ -30,6 +30,11 @@ struct HeartTempoConfig
   int invalidToNoFinger = 5;  // consecutive invalid readings before declaring finger-off
   int missingToNoSensor = 3;  // consecutive polls without an answer before declaring the sensor gone;
                               // fewer count as invalid readings, so a bus glitch keeps the lock
+  // The sensor's typical junk is a high reading out of nowhere. Readings above
+  // cautionAboveBpm are discarded unless within cautionStepBpm of the last kept
+  // reading (a smooth series), or agreeCount of them in a row agree with each other.
+  float cautionAboveBpm = 100;
+  float cautionStepBpm = 8;
   float tauSec = 25;          // smoothing time constant of the heart rate estimate
   float maxDtSec = 10;        // cap on the smoothing step, so long gaps don't cause a jump
   // Hard cap on how fast the clock tempo moves, as a fraction of the tempo per
@@ -86,6 +91,8 @@ private:
 
   void smooth(float hr, uint32_t nowMs);
   void countInvalid();
+  // Applies the cautionAboveBpm rule; false = discard this reading.
+  bool passesCaution(float hr);
   // Push to candidates_ and, if enough of them agree, make them the new history.
   bool tryConsensus(float hr, uint32_t nowMs);
   // Accept a steady climb or fall among the rejected candidates.
@@ -95,6 +102,9 @@ private:
   HeartState state_ = HeartState::NoFinger;
   Buf history_;    // accepted readings
   Buf candidates_; // readings waiting for agreement (acquiring, or rejected while locked)
+  Buf highRun_;    // discarded high readings, in case they keep agreeing
+  bool haveKept_ = false;
+  float lastKept_ = 0; // last reading that passed the caution rule
   int invalidRun_ = 0;
   int missingRun_ = 0;
   bool lastAccepted_ = false;
