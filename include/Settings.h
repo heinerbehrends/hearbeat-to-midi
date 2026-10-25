@@ -106,7 +106,7 @@ constexpr int START_RETRY_AFTER_INVALID = 4;
 constexpr bool REQUIRE_SPO2_VALID = true;
 // Debug: also log the sensor's full 8-byte result as hex on every poll
 // (byte 0 = SpO2, 1 = SpO2 valid, 2-5 = heart rate, 7 = heart rate present).
-constexpr bool LOG_RAW_SENSOR_BYTES = true;
+constexpr bool LOG_RAW_SENSOR_BYTES = false;
 
 // --- Status LED ------------------------------------------------------------------
 // 21 = external WS2812D-F8. 48 = onboard LED (needs the RGB solder jumper bridged).

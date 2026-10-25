@@ -6,3 +6,6 @@
 
 # Machine-specific PlatformIO settings (ports)
 platformio_local.ini
+
+# Serial monitor logs (pio device monitor -f log2file)
+platformio-device-monitor-*.log
