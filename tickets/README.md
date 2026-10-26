@@ -13,6 +13,12 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 | 009 | [Transport LED (beat, tempo direction, count-in)](009-transport-led.md) | implemented | 003, 006 |
 | 010 | [Runtime settings over serial (and double time)](010-runtime-settings.md) | implemented | 002, 006, 009 |
 | 011 | [Control from the DAW over MIDI CC](011-daw-control.md)        | implemented | 010        |
+| 012 | [Manual test: DAW sync, transport, robustness](012-test-transport-and-sync.md) | todo | 006 |
+| 013 | [Manual test: glide, stepped, runtime settings](013-test-glide-and-stepped.md) | todo | 006, 010, 012 |
+| 014 | [Manual test: DAW control over CC](014-test-daw-cc-control.md) | todo | 011, 012 |
+| 015 | [Manual test: both LEDs](015-test-leds.md) | todo | 003, 009, 012 |
+| 016 | [Manual test: REAPER](016-test-reaper.md) | todo | 006, 012 |
+| 017 | [Manual test: web settings page](017-test-web-settings-page.md) | todo | 010, 011 |
 
 ## Conventions
 
