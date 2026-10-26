@@ -32,7 +32,7 @@ const char *const HELP[] = {
     "get <name>          show one parameter",
     "set <name> <value>  change a value; applies at once, not saved",
     "save                store the current values, so they apply after a restart",
-    "reset               all values back to the Settings.h defaults, and saved",
+    "reset               all values back to the Settings.h defaults (not saved)",
     "reset <name>        one value back to its default (not saved)",
 };
 
@@ -184,15 +184,13 @@ void ParamConsole::reset(const char *name)
   float old[COUNT];
   for (int i = 0; i < COUNT; i++)
     old[i] = params_.get(i);
+  // Like set: applies at once, but only `save` makes it permanent, so an
+  // accidental reset is undone by a restart
   params_.resetAll();
-  bool saved = store_.clear() && params_.save(store_);
   for (int i = 0; i < COUNT; i++)
     if (old[i] != params_.get(i) && changed_)
       changed_(i, old[i], params_.get(i));
-  if (saved)
-    reply("ok reset");
-  else
-    reply("err reset: defaults apply, but saving them failed");
+  reply("ok reset");
 }
 
 void ParamConsole::save()

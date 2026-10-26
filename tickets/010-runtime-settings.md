@@ -31,10 +31,10 @@
 ### Persistence
 - [x] [unit] `save` stores values in NVS (namespace `hr2midi`) with a schema version; only values that
       differ from their default are stored, so a changed default in Settings.h still applies to values
-      never set. `reset` restores and saves all defaults; `reset <name>` restores one (unsaved).
+      never set. Like `set`, `reset` (all) and `reset <name>` apply at once but are only stored by `save`.
 - [x] [unit] Loading falls back to the default for missing or invalid values, to all defaults for another
       schema version or a loaded set that breaks a rule.
-- [x] [hw] `set`, `save`, reset (RTS pulse), `get` shows the saved values; `reset` + restart shows the
+- [x] [hw] `set`, `save`, reset (RTS pulse), `get` shows the saved values; `reset` + `save` + restart shows the
       defaults again.
 
 ### Applying changes live

@@ -43,13 +43,14 @@ then one `ok …` or `err …` line.
 | `get <name>` | one parameter |
 | `set <name> <value>` | changes it at once (`ok step_beats=32`, or `err step_beats: must be a power of two 1..64`); not saved yet |
 | `save` | stores the current values, so they apply after a restart |
-| `reset` | all values back to the defaults in `include/Settings.h`, saved |
+| `reset` | all values back to the defaults in `include/Settings.h` (then `save`) |
 | `reset <name>` | one value back to its default (then `save`) |
 
 - Changes are logged as `param: step_beats 16 -> 32`. While playing, a new `step_beats` starts on a
   phrase boundary of both lengths and `tempo_multiplier` on a bar line, so the DAW stays in phase.
 - Values are checked like the build checks `Settings.h` (ranges, `steer_low_bpm` < `steer_high_bpm`, …).
-- A saved value overrides the one in `Settings.h` until `reset`; values never changed follow
+- Nothing is permanent until `save`: after an accidental `set` or `reset`, a restart brings the saved
+  values back. A saved value overrides the one in `Settings.h` until `reset` + `save`; values never changed follow
   `Settings.h`. Pins, the device name and other hardware settings are compile-time only.
 - `save` writes flash, which can make one clock tick a few ms late: save while stopped if that matters.
 

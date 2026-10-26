@@ -6,7 +6,7 @@
 //   get <name>           one parameter
 //   set <name> <value>   change a value (applies at once, not saved)
 //   save                 store the current values (NVS)
-//   reset                all values back to the Settings.h defaults, and saved
+//   reset                all values back to the Settings.h defaults (not saved)
 //   reset <name>         one value back to its default (not saved)
 //
 // Every command answers with zero or more info lines and then exactly one

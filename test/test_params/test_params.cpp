@@ -396,13 +396,15 @@ void test_cmd_save_and_reset(void)
   TEST_ASSERT_EQUAL_STRING("ok led_level=16", r.run("reset led_level").c_str());
   TEST_ASSERT_EQUAL(2, (int)r.store.values.size());
 
-  // reset: everything back, and saved
+  // reset: everything back at once, but like set only stored by save
   r.changes.clear();
   TEST_ASSERT_EQUAL_STRING("ok reset", r.run("reset").c_str());
   TEST_ASSERT_EQUAL(settings::STEP_BEATS, r.params.getInt(STEP_BEATS));
-  TEST_ASSERT_EQUAL(0, (int)r.store.values.size());
-  TEST_ASSERT_EQUAL(SCHEMA_VERSION, r.store.version);
   TEST_ASSERT_EQUAL(1, (int)r.changes.size()); // step_beats; led_level was already back
+  TEST_ASSERT_EQUAL(2, (int)r.store.values.size()); // the saved values survive a restart
+  TEST_ASSERT_EQUAL_STRING("ok saved", r.run("save").c_str());
+  TEST_ASSERT_EQUAL(0, (int)r.store.values.size()); // defaults aren't stored
+  TEST_ASSERT_EQUAL(SCHEMA_VERSION, r.store.version);
 }
 
 void test_cmd_help_and_reply_format(void)
