@@ -3,7 +3,7 @@
 **Status:** todo
 **Depends on:** 006, 012
 
-On the Ubuntu machine, with `tools/reaper/heart_rate_tempo.lua` (setup in its header).
+On the Ubuntu machine, with `tools/reaper/heart_rate_tempo.lua` (setup: `tools/reaper/README.md`).
 
 ## Acceptance criteria
 

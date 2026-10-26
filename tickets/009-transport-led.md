@@ -3,6 +3,10 @@
 **Status:** implemented – hardware check pending (LED not wired yet)
 **Depends on:** 003, 006
 
+Pins are per board in `include/Settings.h`; the values here are the DevKit's (the XIAO's differ).
+
+Hardware checks: see 015 (and 012 for the DAW setup).
+
 ## Acceptance criteria
 
 - [ ] [hw] A second WS2812D-F8 on its own data pin (XIAO D2 / DevKit GPIO10, via 330 Ω), sharing the
@@ -16,7 +20,8 @@
       flashes take the colour of the coming step and grow brighter; no count-in for steps smaller than
       `STEP_CUE_MIN_BPM`. On the boundary itself one long flash (`STEP_FLASH_MS`) in the colour of the
       step just made.
-- [ ] Colours, levels, timing and thresholds are constants in `include/Settings.h`.
+- [x] Colours, levels, timing and thresholds are constants in `include/Settings.h` (levels and the
+      count-in length are also runtime settings, 010).
 
 ## Notes
 

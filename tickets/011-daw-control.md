@@ -23,7 +23,7 @@
 - [x] The live-apply rules are those of `set`:
       `tempo_multiplier` on the next bar line, while stopped at once; rate and feedback at once
       via `HeartTempo::setConfig` (glide continues).
-- [ ] [hw] Double-time changes by CC while playing land on the bar line (as 010).
+- [ ] [hw] Double-time changes by CC while playing land on the bar line (as 010): see 014.
 
 ### Rate override
 - [x] [unit] The effective rate preset is the CC 22 override if one came since the rate switch last
@@ -43,11 +43,8 @@
 
 ## Controls
 
-| CC (channel 16) | Changes | Values |
-| --- | --- | --- |
-| 22 | rate preset | 0–42 slow, 43–85 medium, 86–127 fast; overrides the switch until it moves |
-| 23 | `feedback_offset_bpm` | 0–127 → 0–10 bpm, linear, 0.1 bpm steps |
-| 24 | `tempo_multiplier` | 0–63 → 1, 64–127 → 2 |
+The CC table is in the main README, ["Control from the DAW"](../README.md#control-from-the-daw); numbers,
+channel and value zones are defined in `include/Settings.h` (`CONTROL_CC_*`, `CC_*`).
 
 ## Notes
 

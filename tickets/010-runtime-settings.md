@@ -45,9 +45,11 @@
       serial port (non-blocking, every 100 ms), owns the registry and is its only writer.
 - [x] The rate switch still selects slow / medium / fast; the `rate_*` parameters change what each
       position means, applied at once (glide continues).
-- [ ] [hw] [unit for the rule] A `step_beats` change while playing takes effect on a beat that is a
-      phrase boundary of both the old and the new length (every max(old, new) beats from Start), so the
-      phrase grid stays in phase with the DAW. While stopped it applies at once.
+- [x] [unit] A `step_beats` change while playing takes effect on a beat that is a phrase boundary of
+      both the old and the new length (every max(old, new) beats from Start), so the phrase grid stays
+      in phase with the DAW (`test_step_change_waits_for_common_boundary`). While stopped it applies at
+      once.
+- [ ] [hw] The same while playing into a DAW: see 013.
 
 ### Double time (`tempo_multiplier`)
 - [x] [unit] `tempo_multiplier` 1 or 2: clock tempo = heart rate tempo × multiplier. Applied as a scale
@@ -55,12 +57,16 @@
       heart rate terms.
 - [x] [unit] The clock tempo is capped at `MAX_CLOCK_BPM` (240), below the tempo CC's 255.98 bpm limit.
 - [x] [log] `Clock:` in the plotter line shows the multiplied tempo (verified: `Tempo:70.00,Clock:140.00`).
-- [ ] [hw] [unit for the rule] Switching while playing takes effect on the next bar line (tick count since
-      Start a multiple of `beats_per_bar` × 24); while stopped at once. In stepped mode the held tempo is
-      scaled too. The tempo CC (REAPER), beat counting, phrase boundaries and the transport LED's count-in
-      follow the clock beats.
+- [x] [unit] Switching while playing takes effect on the next bar line (tick count since Start a
+      multiple of `beats_per_bar` × 24; `test_multiplier_change_lands_on_a_bar_line`); while stopped at
+      once.
+- [ ] [hw] While playing into a DAW: lands on the bar line; in stepped mode the held tempo is scaled
+      too; the tempo CC (REAPER), beat counting, phrase boundaries and the transport LED's count-in
+      follow the clock beats. See 013 / 015 / 016.
 
 ## Parameters
+
+As at implementation; for the current list see `get` or `lib/Params/src/Params.cpp`.
 
 | Name | Type | Default | Range |
 | --- | --- | --- | --- |
@@ -85,9 +91,9 @@
 
 ## Notes
 
-- Built so the next steps can reuse it: MIDI CC from the DAW (map a CC to a parameter and scale 0–127
-  across min..max, then call `Params::set`) and a Web Serial settings page (`get` lists everything
-  with type, range and description; every command ends with one `ok` / `err` line).
+- Built so the next steps could reuse it, and they do: MIDI CC from the DAW (011) and the Web Serial
+  settings page (`docs/`; `get` lists everything with type, range and description, every command ends
+  with one `ok` / `err` line).
 - `save` writes flash, which pauses flash access on both cores for a moment: a clock tick can come a few
   ms late. Save while stopped if that matters.
 - The storage key is the name cut to 15 characters (NVS limit); a unit test keeps them unique.

@@ -1,8 +1,12 @@
 # 006 – Stepped tempo mode and DAW transport
 
-**Status:** implemented – transport + stepped mode still to verify with a DAW and the switch
-(BOOT stand-in) and with a DAW
+**Status:** implemented – transport and stepped mode still to verify with a DAW (the BOOT button
+stands in for the switch until 019)
 **Depends on:** 001, 002
+
+Pins are per board in `include/Settings.h`; the values here are the DevKit's (the XIAO's differ).
+
+Hardware checks: see 012 (transport, sync), 013 (stepped mode), 016 (REAPER), 019 (switch wiring).
 
 ## Acceptance criteria
 
@@ -16,12 +20,12 @@
 - [ ] [hw] → stop: **Stop** (FC). The MIDI clock keeps running in every mode.
 - [ ] [hw] Switch already on at power-on, or USB (re)connects while running: SPP 0 + Start once the host
       listens.
-- [ ] `TRANSPORT_SWITCH_INSTALLED = false` until wired (an unwired switch reads "run"); the BOOT button
+- [x] `TRANSPORT_SWITCH_INSTALLED = false` until wired (an unwired switch reads "run"); the BOOT button
       then cycles stop → run → stepped.
-- [ ] [log] `transport: stop -> run` lines; plotter `Mode:<-1|0|1>`.
+- [x] [log] `transport: stop -> run` lines; plotter `Mode:<-1|0|1>`.
 
 ### Stepped mode
-- [ ] [hw] The clock tempo is constant for `STEP_BEATS` beats (default **16** = 4 bars of 4/4), counted
+- [ ] [hw] The clock tempo is constant for `step_beats` beats (default **16** = 4 bars of 4/4), counted
       from Start, and changes only on the boundary beat.
 - [ ] [hw] At each boundary it jumps to the current glide tempo, so a step is what the glide covered in
       that phrase: at most ~1.2 % (slow), ~2.4 % (medium), ~6.4 % (fast) per 16 beats.
@@ -34,7 +38,7 @@
 
 The glide is designed to be imperceptible. Stepped mode instead holds the tempo dead steady and changes it
 at phrase boundaries, as a band or DJ would. The DAW knows where the phrases are from Song Position +
-Start; performers count the 16 beats themselves (no cue light in this version).
+Start; performers see the count-in on the transport LED (009).
 
 REAPER doesn't follow MIDI clock tempo at all (only SPP position / start / stop), so the device also sends
 its tempo as a 14-bit CC pair for the REAPER script. Stepped mode is the clean case for REAPER: it gets one
@@ -44,7 +48,7 @@ a few hundred ms and is never re-aligned.
 ## Notes / Design
 
 - The clock task owns the beat counter (reset when Start is sent) and the held interval; it refreshes the
-  held interval from the glide on every `STEP_BEATS × 24`-th tick.
+  held interval from the glide on every `step_beats × 24`-th tick.
 - A step is a sudden change; the noticing threshold for steps is ~2–6 % (Drake & Botte 1993), much higher
   than ~0.15–0.27 %/beat for glides. Medium stays around that threshold, fast is deliberately audible.
 - Exception to the README invariant "tempo only moves through the glide limit": in stepped mode it jumps
@@ -52,6 +56,6 @@ a few hundred ms and is never re-aligned.
 
 ## Out of scope / later
 
-- A cue LED (count-in before steps, beat flash): not needed while the interval is a fixed 16 beats.
 - Receiving clock/transport from the DAW (the device stays the clock master).
-- A selectable interval on the panel (it is `STEP_BEATS` in `include/Settings.h`).
+- A step-length control on the panel: the step length is the runtime setting `step_beats` (010; settings
+  page or `set`). Beat flash and count-in are on the transport LED (009).

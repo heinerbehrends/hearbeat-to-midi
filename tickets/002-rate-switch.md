@@ -3,22 +3,30 @@
 **Status:** implemented – hardware check pending (switches not wired yet)
 **Depends on:** 001 (reuses the switch decoding/debounce helper)
 
+Pins are per board in `include/Settings.h`; the values here are the DevKit's (the XIAO's differ). Dropping this switch is under
+consideration: 018. The rate can also be set by CC 22 (011).
+
 ## Acceptance criteria
 
 - [ ] [hw] Second switch on GPIO6 / GPIO7: both high = **medium** (centre), GPIO6 low = **slow**,
       GPIO7 low = **fast**. Both low is treated as medium.
-- [ ] [unit] Presets come from one table (below). Medium equals today's `HeartTempoConfig` defaults, so
+- [x] [unit] Presets come from one table (below). Medium equals today's `HeartTempoConfig` defaults, so
       behaviour with the switch centred is unchanged (all existing tests still pass).
 - [ ] [unit] Switching preset never causes a jump: `tempo()` and `heartRate()` immediately after the
       switch equal the values immediately before; from the next `update()` on the per-step change obeys
-      the **new** limit (`|Δtempo| / tempo ≤ maxChangePerBeat_new × beats`).
+      the **new** limit (`|Δtempo| / tempo ≤ maxChangePerBeat_new × beats`). (Continuity is covered by
+      `test_rate_change_is_continuous_and_applies` / `test_set_config_is_continuous_and_applies`; the
+      per-step check with a changed limit is not.)
 - [ ] [unit] Mid-glide (HR step 70 → 100, fast preset) switching to slow: tempo keeps rising
       monotonically, never overshoots the target, and the step size drops to the slow limit.
 - [ ] [unit] Per preset, with a 70 → 100 HR step: every step obeys that preset's glide limit, and the
-      time to get within 0.5 bpm of 100 is ordered fast < medium < slow.
-- [ ] [log] Plotter line gains `Rate:<-1|0|1>` (slow/medium/fast); text line `rate: medium -> fast` on each change and once
-      at boot.
-- [ ] Debounce and decoding are identical to 001 (same helper, same 30 ms).
+      time to get within 0.5 bpm of 100 is ordered fast < medium < slow. (Only fast vs. medium is
+      tested so far.)
+- [x] [log] Plotter line gains `Rate:<-1|0|1>` (slow/medium/fast); text line `rate: medium -> fast` on each change and once
+      at boot (followed by the preset's values, e.g. `(0.400 %/beat, tau 12 s)`).
+- [x] Debounce and decoding are identical to 001 (same helper, same 30 ms).
+
+Hardware checks: see 013 / 014 (glide speed, CC 22 override) and 020 (wiring in the box).
 
 | Preset | maxChangePerBeat  | tauSec |
 | ------ | ----------------- | ------ |
@@ -50,4 +58,4 @@ Madison & Merker 2004 / Dahl & Granqvist 2003 that the medium value is based on)
 ## Out of scope
 
 - Continuous rate control (pot).
-- Separate presets for the outlier gate / consensus (they stay fixed).
+- Separate presets for the outlier gate / consensus (they are runtime settings now, shared by all presets).

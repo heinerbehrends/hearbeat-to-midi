@@ -3,6 +3,8 @@
 **Status:** implemented – hardware check pending (LED not wired yet)
 **Depends on:** –
 
+Pins are per board in `include/Settings.h`; the values here are the DevKit's (the XIAO's differ). (XIAO: D3.)
+
 ## Acceptance criteria
 
 - [ ] [hw] Status LED is driven on **GPIO21**; GPIO48 (onboard, disconnected on this clone by the open
@@ -13,7 +15,8 @@
       - **amber** = Acquiring; with `LED_SHOW_EVERY_MISS = true` (testing) also Locked but the last
         reading was missing/rejected
       - **green steady** = Locked (and, with `LED_SHOW_EVERY_MISS`, last reading accepted)
-      - No beat flash: it can't be in phase with the DAW without MIDI Start, so it moves to 006.
+      - No beat flash: it can't be in phase with the DAW without MIDI Start; it moved to the
+        transport LED (009).
 - [ ] [hw] Red and green are not swapped (WS2812D expects GRB); if they are, fix with
       `rgbLedWriteOrdered(..., LED_COLOR_ORDER_GRB, ...)` / the right order constant, not by swapping r/g
       in the state logic.
@@ -21,7 +24,9 @@
       `include/Settings.h`). Comfortable to look at from 50 cm in a dim room; one constant to change.
 - [ ] [hw] LED stays dark/stable during boot and USB enumeration (no random colour burst lasting > 1 s).
       Optional: 10 kΩ pull-down on DIN so it stays dark while the ESP is held in reset.
-- [ ] [log] No change to the log.
+- [x] [log] No change to the log.
+
+Hardware checks: see 015.
 
 ## Context
 
@@ -59,6 +64,6 @@ GPIO21 ──[330 Ω]── DIN                     resistor close to the LED
 
 ## Out of scope
 
-- More than one LED / a chain.
+- A chain of LEDs. (A second LED on its own pin is the transport LED, 009.)
 - Showing switch positions or the valid-reading rate on the LED.
 - Fixing the onboard RGB jumper.

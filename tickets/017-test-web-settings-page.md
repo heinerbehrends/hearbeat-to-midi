@@ -7,8 +7,9 @@ In Chrome or Edge, with the PlatformIO serial monitor closed (only one program c
 
 ## Acceptance criteria
 
-- [ ] [hw] Connect to the DevKit's UART port (CH343) without resetting the board; the form loads from
-      `get`.
+- [ ] [hw] Connect to the DevKit's UART port (CH343): the board isn't held in reset. If opening the port
+      restarts it once, the page waits and retries `get` by itself, and the form loads without further
+      action.
 - [ ] [hw] Setting a value applies at once; an invalid value shows the error and restores the field.
 - [ ] [hw] The "unsaved changes" indicator appears after a change and clears after Save.
 - [ ] [hw] Saved values survive a restart of the device.
