@@ -28,8 +28,8 @@ breadboard/development board. Both are built from the same code (PlatformIO envi
 - Shelf under the board (pocket locates it, tape holds it), end stop at the far end, glue tab down
   the end wall into the 1.8 mm gap in front of the lid lip; the holder clears the lip and the corner
   bosses (22.5 mm free between them).
-- Before printing, **measure** `pcb_t`, `usb_overhang` (receptacle past the PCB edge) and
-  `usb_above_pcb` (USB-C centre above the PCB top); they set the wall opening height.
+- Measured: PCB 1.0 mm, USB-C receptacle 2.0 mm past the PCB edge, sitting directly on the PCB
+  (centre ≈ 1.6 mm above it). That puts the wall opening centre at ≈ 6.8 mm above the rim.
 - Check your USB-C cable's plug moulding fits the opening (`plug_w` × `plug_h`); the moulding has to
   enter the wall for the plug to seat.
 - Glue it with the board in place and a cable plugged in through the wall, so it aligns itself.

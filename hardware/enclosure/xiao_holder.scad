@@ -12,12 +12,13 @@
 
 part = "holder"; // [holder, preview]
 
-/* [XIAO ESP32-S3 Plus: measure and adjust] */
+/* [XIAO ESP32-S3 Plus: measured] */
 xiao_l = 21.0;          // PCB, USB end to the far end
 xiao_w = 17.8;
-pcb_t = 1.0;            // PCB thickness
-usb_overhang = 1.0;     // how far the USB-C receptacle sticks out past the PCB edge
-usb_above_pcb = 1.6;    // USB-C centre above the PCB's top surface
+pcb_t = 1.0;            // PCB thickness (measured)
+usb_overhang = 2.0;     // how far the USB-C receptacle sticks out past the PCB edge (measured)
+usb_above_pcb = 1.6;    // USB-C centre above the PCB's top surface: the receptacle sits
+                        // directly on the PCB (measured), half its ~3.2 mm height
 fit = 0.2;
 
 /* [Box: Hammond 1590A] */
