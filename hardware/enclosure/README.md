@@ -20,7 +20,7 @@ breadboard/development board. Both are built from the same code (PlatformIO envi
   behind a plug-sized opening (13.5 × 7.5 mm, centre ≈ 6.8 mm above the rim: the model echoes the exact
   height). No laptop panel socket needed; the XIAO has the CC resistors, so C-to-C cables work.
 - **Sensor socket** (4-pin USB-C, V/D−/D+/G, no CC) in end wall B, raised above the lid lip.
-- **Switches and LED** on the top face, in the middle: keep the switches ~22 mm from wall A
+- **Switches and LED** on the top face, in the middle: keep the switches ~25 mm from wall A
   (XIAO + holder) and ~17 mm from wall B (socket).
 
 ## XIAO holder
@@ -53,7 +53,7 @@ socket:** a USB-A charger or port on an A-to-C cable would put 5 V onto the 3V3 
 ## Height (inside 25.4 mm from the rim to the top face)
 
 - XIAO holder: shelf 3.0–4.6, board up to ≈ 9 mm above the rim; switch lugs (14.1 mm + wires) end
-  ≈ 9.8 mm above the rim, so keep switches out of the XIAO's 21 mm.
+  ≈ 9.8 mm above the rim, so keep switches out of the holder's ~25 mm.
 - Sensor socket body: cutout centre ≈ 9.5 mm above the rim.
 
 ## Development with the XIAO
