@@ -14,7 +14,7 @@
 - [ ] [unit] A pure function (e.g. `float safeClockBpm(float bpm, float lastGood)`) used by `main.cpp`
       right before `intervalFor()` returns a value in [50, 140] for any input, including NaN, ±inf, 0 and
       negatives (NaN/inf → `lastGood`, which itself is clamped; initial `lastGood` = `startBpm`).
-- [ ] [unit] `startBpm` (90) lies inside the limits; a `static_assert` or test guards this.
+- [ ] [unit] `startBpm` (`START_BPM`, 70) lies inside the limits; a `static_assert` or test guards this.
 - [ ] [hw] The clock never stops: the interval passed to the clock task is always in
       [~17 857 µs (140 BPM), 50 000 µs (50 BPM)] per tick. Verified by DAW tempo display or by logging the
       min/max interval over a session.

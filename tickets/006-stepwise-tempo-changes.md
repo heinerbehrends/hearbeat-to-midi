@@ -1,8 +1,8 @@
 # 006 – Stepped tempo mode and DAW transport
 
-**Status:** done – firmware built and flashed; transport + stepped mode still to verify on hardware
+**Status:** implemented – transport + stepped mode still to verify with a DAW and the switch
 (BOOT stand-in) and with a DAW
-**Depends on:** 001, 002, 004
+**Depends on:** 001, 002
 
 ## Acceptance criteria
 

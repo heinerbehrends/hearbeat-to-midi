@@ -1,6 +1,6 @@
 # 003 – External WS2812D status LED on GPIO21
 
-**Status:** todo – firmware done (GPIO21, off at boot), hardware check pending
+**Status:** implemented – hardware check pending (LED not wired yet)
 **Depends on:** –
 
 ## Acceptance criteria

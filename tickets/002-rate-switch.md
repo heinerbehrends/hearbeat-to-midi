@@ -1,6 +1,6 @@
 # 002 – Rate switch (slow / medium / fast presets)
 
-**Status:** done – hardware check pending (switches not wired yet)
+**Status:** implemented – hardware check pending (switches not wired yet)
 **Depends on:** 001 (reuses the switch decoding/debounce helper)
 
 ## Acceptance criteria
