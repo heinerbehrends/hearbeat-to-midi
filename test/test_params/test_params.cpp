@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <ClockGrid.h>
+#include <MidiControl.h>
 #include <ParamConsole.h>
 #include <Params.h>
 #include <Settings.h>
@@ -16,6 +17,7 @@
 #endif
 
 using namespace params;
+namespace mc = midicontrol;
 
 // ParamStore in memory
 class MemStore : public ParamStore
@@ -491,6 +493,198 @@ void test_multiplier_scales_interval_with_cap(void)
   TEST_ASSERT_TRUE(settings::MAX_CLOCK_BPM * 64 < 16384);
 }
 
+// --- Control from the DAW (incoming MIDI CC) -----------------------------------------
+
+// A USB-MIDI event packet: control change on a channel (1-16)
+struct Packet
+{
+  uint8_t b[4];
+};
+
+static Packet cc(uint8_t number, uint8_t value, uint8_t channel = settings::CONTROL_CC_CHANNEL)
+{
+  return {{0x0B, (uint8_t)(0xB0 | (channel - 1)), number, value}};
+}
+
+// MidiControl + RateSelect + Params, collecting the log lines main.cpp would print
+struct CcRig
+{
+  Params params;
+  MidiControl control;
+  RateSelect rate;
+  std::vector<std::string> changes;
+  std::vector<std::string> refused;
+
+  // Feeds packets as one pass and applies them
+  void pass(std::initializer_list<Packet> packets)
+  {
+    for (const Packet &p : packets)
+      control.feed(p.b);
+    control.apply(
+        params, rate,
+        [this](int id, float o, float n, const char *source) {
+          char buf[80];
+          std::snprintf(buf, sizeof(buf), "%s %g -> %g (%s)", def(id).name, o, n, source);
+          changes.push_back(buf);
+        },
+        [this](const char *error, const char *source) { refused.push_back(std::string(source) + ": " + error); });
+  }
+};
+
+void test_cc_mappings(void)
+{
+  // step_beats: four equal zones
+  const int steps[][2] = {{0, 4}, {31, 4}, {32, 8}, {63, 8}, {64, 16}, {95, 16}, {96, 32}, {127, 32}};
+  for (const auto &s : steps)
+    TEST_ASSERT_EQUAL(s[1], mc::stepBeatsFor(s[0]));
+  // rate: 0-42 slow, 43-85 medium, 86-127 fast
+  const int rates[][2] = {{0, -1}, {42, -1}, {43, 0}, {85, 0}, {86, 1}, {127, 1}};
+  for (const auto &r : rates)
+    TEST_ASSERT_EQUAL(r[1], mc::rateFor(r[0]));
+  // feedback offset: linear 0-10 bpm in tenths
+  TEST_ASSERT_EQUAL_FLOAT(0, mc::feedbackOffsetFor(0));
+  TEST_ASSERT_EQUAL_FLOAT(10, mc::feedbackOffsetFor(127));
+  TEST_ASSERT_EQUAL_FLOAT(5.0f, mc::feedbackOffsetFor(64)); // 5.04 -> 5.0
+  TEST_ASSERT_EQUAL_FLOAT(0.1f, mc::feedbackOffsetFor(1));  // 0.079 -> 0.1
+  for (int v = 1; v < 128; v++)
+    TEST_ASSERT_TRUE(mc::feedbackOffsetFor(v) >= mc::feedbackOffsetFor(v - 1)); // never goes back
+  // tempo multiplier: two halves
+  TEST_ASSERT_EQUAL(1, mc::tempoMultiplierFor(0));
+  TEST_ASSERT_EQUAL(1, mc::tempoMultiplierFor(63));
+  TEST_ASSERT_EQUAL(2, mc::tempoMultiplierFor(64));
+  TEST_ASSERT_EQUAL(2, mc::tempoMultiplierFor(127));
+  // Every mapped value passes the registry's own checks
+  for (int v = 0; v < 128; v++)
+  {
+    Params p;
+    TEST_ASSERT_TRUE(p.set(COUNT_IN_BEATS, 0));
+    TEST_ASSERT_TRUE(p.set(STEP_BEATS, mc::stepBeatsFor(v)));
+    TEST_ASSERT_TRUE(p.set(FEEDBACK_OFFSET_BPM, mc::feedbackOffsetFor(v)));
+    TEST_ASSERT_TRUE(p.set(TEMPO_MULTIPLIER, mc::tempoMultiplierFor(v)));
+  }
+}
+
+void test_cc_filtering(void)
+{
+  TEST_ASSERT_EQUAL(mc::STEP_BEATS, mc::controlFor(cc(21, 0).b));
+  TEST_ASSERT_EQUAL(mc::RATE, mc::controlFor(cc(22, 0).b));
+  TEST_ASSERT_EQUAL(mc::FEEDBACK_OFFSET, mc::controlFor(cc(23, 0).b));
+  TEST_ASSERT_EQUAL(mc::TEMPO_MULTIPLIER, mc::controlFor(cc(24, 0).b));
+  // Our own tempo CC pair coming back through MIDI-thru
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(cc(settings::TEMPO_CC, 10).b));
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(cc(settings::TEMPO_CC + 32, 10).b));
+  // Other channels, other CCs
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(cc(21, 100, 1).b));
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(cc(21, 100, 15).b));
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(cc(7, 100).b));
+  // Note on (same bytes otherwise), clock, a malformed value
+  const uint8_t noteOn[4] = {0x09, 0x9F, 21, 100};
+  const uint8_t clock[4] = {0x0F, 0xF8, 0, 0};
+  const uint8_t badValue[4] = {0x0B, 0xBF, 21, 0x80};
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(noteOn));
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(clock));
+  TEST_ASSERT_EQUAL(-1, mc::controlFor(badValue));
+
+  // Ignored messages change nothing
+  CcRig r;
+  r.pass({cc(20, 0), cc(52, 127), cc(21, 127, 1), {{0x09, 0x9F, 21, 127}}});
+  TEST_ASSERT_EQUAL(0, (int)r.changes.size());
+  TEST_ASSERT_EQUAL(settings::STEP_BEATS, r.params.getInt(STEP_BEATS));
+  TEST_ASSERT_FALSE(r.rate.overridden());
+}
+
+void test_cc_changes_params_like_set(void)
+{
+  CcRig r;
+  r.pass({cc(21, 100)});
+  TEST_ASSERT_EQUAL(32, r.params.getInt(STEP_BEATS));
+  TEST_ASSERT_EQUAL(1, (int)r.changes.size());
+  TEST_ASSERT_EQUAL_STRING("step_beats 16 -> 32 (cc21=100)", r.changes[0].c_str());
+  r.pass({cc(23, 127), cc(24, 64)});
+  TEST_ASSERT_EQUAL_FLOAT(10, r.params.get(FEEDBACK_OFFSET_BPM));
+  TEST_ASSERT_EQUAL(2, r.params.getInt(TEMPO_MULTIPLIER));
+  TEST_ASSERT_EQUAL_STRING("feedback_offset_bpm 5 -> 10 (cc23=127)", r.changes[1].c_str());
+  TEST_ASSERT_EQUAL_STRING("tempo_multiplier 1 -> 2 (cc24=64)", r.changes[2].c_str());
+  // Not saved: a later save stores them, like set
+  MemStore store;
+  TEST_ASSERT_EQUAL(0, (int)store.values.size());
+  TEST_ASSERT_TRUE(r.params.save(store));
+  TEST_ASSERT_EQUAL(3, (int)store.values.size());
+}
+
+void test_cc_only_acts_on_a_changed_value(void)
+{
+  CcRig r;
+  // A knob stream within one zone: one change
+  r.pass({cc(21, 96), cc(21, 100), cc(21, 110)});
+  r.pass({cc(21, 120), cc(21, 127)});
+  TEST_ASSERT_EQUAL(1, (int)r.changes.size());
+  // A burst is coalesced to its last value per control
+  r.pass({cc(21, 70), cc(21, 40), cc(21, 75)});
+  TEST_ASSERT_EQUAL(2, (int)r.changes.size());
+  TEST_ASSERT_EQUAL_STRING("step_beats 32 -> 16 (cc21=75)", r.changes[1].c_str());
+  // There and back within one pass: nothing
+  r.pass({cc(21, 100), cc(21, 64)});
+  TEST_ASSERT_EQUAL(2, (int)r.changes.size());
+  // A value equal to the current one isn't reported (feedback 5 = cc 64)
+  r.pass({cc(23, 64)});
+  TEST_ASSERT_EQUAL(2, (int)r.changes.size());
+  // Last change wins: after a serial set the knob acts again once its zone changes
+  TEST_ASSERT_TRUE(r.params.set(STEP_BEATS, 64));
+  r.pass({cc(21, 70)});
+  TEST_ASSERT_EQUAL(64, r.params.getInt(STEP_BEATS));
+  r.pass({cc(21, 40)});
+  TEST_ASSERT_EQUAL(8, r.params.getInt(STEP_BEATS));
+}
+
+void test_cc_short_step_lowers_count_in(void)
+{
+  CcRig r;
+  TEST_ASSERT_EQUAL(4, r.params.getInt(COUNT_IN_BEATS));
+  r.pass({cc(21, 0)}); // step 4 needs count_in_beats < 4
+  TEST_ASSERT_EQUAL(4, r.params.getInt(STEP_BEATS));
+  TEST_ASSERT_EQUAL(3, r.params.getInt(COUNT_IN_BEATS));
+  TEST_ASSERT_EQUAL(2, (int)r.changes.size());
+  TEST_ASSERT_EQUAL_STRING("count_in_beats 4 -> 3 (cc21=0)", r.changes[0].c_str());
+  TEST_ASSERT_EQUAL_STRING("step_beats 16 -> 4 (cc21=0)", r.changes[1].c_str());
+  TEST_ASSERT_EQUAL(0, (int)r.refused.size());
+}
+
+void test_cc_rate_override(void)
+{
+  RateSelect rs;
+  rs.setSwitch(0);
+  TEST_ASSERT_EQUAL(0, rs.effective());
+  TEST_ASSERT_FALSE(rs.overridden());
+  // CC overrides the switch
+  rs.setOverride(1, 100);
+  TEST_ASSERT_EQUAL(1, rs.effective());
+  TEST_ASSERT_TRUE(rs.overridden());
+  // The switch staying where it is keeps the override
+  rs.setSwitch(0);
+  TEST_ASSERT_EQUAL(1, rs.effective());
+  // Moving it wins
+  rs.setSwitch(-1);
+  TEST_ASSERT_EQUAL(-1, rs.effective());
+  TEST_ASSERT_FALSE(rs.overridden());
+  // ...until the next CC
+  rs.setOverride(0, 60);
+  TEST_ASSERT_EQUAL(0, rs.effective());
+  TEST_ASSERT_EQUAL(60, rs.ccValue());
+
+  // Through MidiControl: zones, only on change, no parameter touched
+  CcRig r;
+  r.rate.setSwitch(0);
+  r.pass({cc(22, 127)});
+  TEST_ASSERT_EQUAL(1, r.rate.effective());
+  r.rate.setSwitch(-1); // switch moved: slow
+  r.pass({cc(22, 120)}); // same zone as before: no change, the switch keeps it
+  TEST_ASSERT_EQUAL(-1, r.rate.effective());
+  r.pass({cc(22, 50)});
+  TEST_ASSERT_EQUAL(0, r.rate.effective());
+  TEST_ASSERT_EQUAL(0, (int)r.changes.size());
+}
+
 #ifdef ARDUINO
 void test_nvs_round_trip(void);
 #endif
@@ -525,6 +719,12 @@ static void runTests()
   RUN_TEST(test_tempo_multiplier_is_1_or_2);
   RUN_TEST(test_multiplier_change_lands_on_a_bar_line);
   RUN_TEST(test_multiplier_scales_interval_with_cap);
+  RUN_TEST(test_cc_mappings);
+  RUN_TEST(test_cc_filtering);
+  RUN_TEST(test_cc_changes_params_like_set);
+  RUN_TEST(test_cc_only_acts_on_a_changed_value);
+  RUN_TEST(test_cc_short_step_lowers_count_in);
+  RUN_TEST(test_cc_rate_override);
 #ifdef ARDUINO
   RUN_TEST(test_nvs_round_trip);
 #endif

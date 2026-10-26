@@ -1,6 +1,6 @@
 // Runtime settings: a registry of the tunable values from include/Settings.h that
-// can be changed without recompiling (serial commands now; MIDI CC and a Web
-// Serial page later), with validation and persistence.
+// can be changed without recompiling (serial commands, MIDI CC from the DAW via
+// MidiControl.h; a Web Serial page later), with validation and persistence.
 // Pure C++ (no Arduino dependencies) so it can be tested off the board; the
 // Arduino side only supplies a ParamStore (NVS, see lib/ParamNvs).
 //

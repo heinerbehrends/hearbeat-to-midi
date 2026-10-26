@@ -5,9 +5,10 @@
 //         loop() reads the switches and drives the status LED.
 //
 // Settings to tweak live in include/Settings.h; the ones marked [runtime] can
-// also be changed over the serial port (read by the sensor task, see README).
-// Their live values are published as atomics: the clock task and loop() read
-// them lock-free, the sensor task is the only writer.
+// also be changed over the serial port, and a few by MIDI CC from the DAW (both
+// applied by the sensor task, see README). Their live values are published as
+// atomics: the clock task and loop() read them lock-free, the sensor task is the
+// only writer.
 #include <Arduino.h>
 #include <USB.h>
 #include <USBMIDI.h>
@@ -18,6 +19,7 @@
 #include <esp32-hal-tinyusb.h>
 #include <ClockGrid.h>
 #include <HeartTempo.h>
+#include <MidiControl.h>
 #include <ParamConsole.h>
 #include <ParamNvs.h>
 #include <Params.h>
@@ -32,6 +34,9 @@ static const uint8_t SENSOR_ADDR = 0x57;
 static const uint8_t REG_RESULT = 0x0C; // 8 bytes: [0] SpO2, [2..5] heart rate (big endian), 0 = none
 static const uint8_t REG_COLLECT = 0x20;
 static const uint32_t TEMPO_UPDATE_MS = 100;
+// Received MIDI packets read per call at most: more than the receive buffer
+// holds (16), so it is always drained, but the USB task never loops unbounded
+static const int MIDI_IN_MAX_PER_PASS = 32;
 
 static const int PPQN = 24;
 static const uint8_t MIDI_CLOCK = 0xF8;
@@ -63,6 +68,10 @@ static std::atomic<uint32_t> ticksSinceStart{0}; // clock ticks sent since the l
 static std::atomic<int> glideDir{0};             // +1 tempo gliding up, -1 down, 0 holding
 static std::atomic<int> nextStepDir{0};          // stepped: direction of the coming step
 static std::atomic<int> lastStepDir{0};          // stepped: direction of the step just made
+// DAW control: the latest CC value + 1 per control, 0 = none since the sensor
+// task last took it (so it is valid from power-on, before setup() runs). Written
+// by tud_midi_rx_cb (USB task), taken by the sensor task.
+static std::atomic<int> ccLatest[midicontrol::COUNT];
 
 // Runtime settings. `runtime` and `nvs` belong to the sensor task (after setup);
 // every change is copied to liveParam, which the other tasks read.
@@ -401,6 +410,26 @@ static void clockTask(void *)
   }
 }
 
+// Incoming MIDI from the DAW. TinyUSB calls this (in its own task) whenever a
+// transfer from the host arrived. Its receive buffer holds only 16 packets and
+// the host can send the next transfer only once it's drained, so it is read
+// right here: polling from a task would hold every message up until the next
+// poll (at the sensor task's 100 ms, a knob sweep backs up for seconds).
+// Non-blocking; received and sent packets have separate FIFOs with their own
+// locks, so this doesn't hold up the clock task's writes. Only the latest value
+// per control is handed over; the sensor task, the registry's only writer,
+// applies it.
+extern "C" void tud_midi_rx_cb(uint8_t itf)
+{
+  midiEventPacket_t p;
+  for (int n = 0; n < MIDI_IN_MAX_PER_PASS && DeviceMIDI.readPacket(&p); n++)
+  {
+    int c = midicontrol::controlFor((const uint8_t *)&p);
+    if (c >= 0)
+      ccLatest[c].store(p.byte3 + 1);
+  }
+}
+
 static void printLine(const char *line)
 {
   Serial.printf("%s\r\n", line);
@@ -414,16 +443,30 @@ static void sensorTask(void *)
   int loggedMode = MODE_STOP;
   int loggedStepBeats = appliedStepBeats.load(), loggedMultiplier = appliedMultiplier.load();
   bool configChanged = false;
-  // Serial commands (set, get, save, ...). `save` writes flash, which can delay
-  // a clock tick by a few ms.
-  ParamConsole console(runtime, nvs, printLine, [&](int id, float oldValue, float newValue) {
+  // Every change, from a serial command or a DAW CC (`source`, e.g. "cc21=70"),
+  // is logged and published the same way
+  auto paramChanged = [&](int id, float oldValue, float newValue, const char *source) {
     char from[24], to[24];
     runtime.format(id, oldValue, from, sizeof(from));
     runtime.format(id, newValue, to, sizeof(to));
-    Serial.printf("param: %s %s -> %s\r\n", params::def(id).name, from, to);
+    if (source)
+      Serial.printf("param: %s %s -> %s (%s)\r\n", params::def(id).name, from, to, source);
+    else
+      Serial.printf("param: %s %s -> %s\r\n", params::def(id).name, from, to);
     liveParam[id].store(newValue);
     configChanged = true;
-  });
+  };
+  // Serial commands (set, get, save, ...). `save` writes flash, which can delay
+  // a clock tick by a few ms.
+  ParamConsole console(runtime, nvs, printLine,
+                       [&](int id, float oldValue, float newValue) { paramChanged(id, oldValue, newValue, nullptr); });
+  // CCs from the DAW: same checks and live rules as `set`, not saved
+  MidiControl midiControl;
+  RateSelect rateSelect; // rate switch, or the CC override since it last moved
+  const MidiControl::Changed ccChanged = paramChanged;
+  const MidiControl::Rejected ccRejected = [](const char *error, const char *source) {
+    Serial.printf("param: %s refused: %s\r\n", source, error);
+  };
   bool collecting = false;
   int failedPolls = 0, invalidPolls = 0;
   uint32_t lastPoll = millis() - SENSOR_POLL_MS;
@@ -434,6 +477,16 @@ static void sensorTask(void *)
 
     while (Serial.available() > 0)
       console.feed((char)Serial.read());
+
+    // The switch first, so a CC in the same pass wins (it came later)
+    rateSelect.setSwitch(rateSwitch.load());
+    for (int c = 0; c < midicontrol::COUNT; c++)
+    {
+      int v = ccLatest[c].exchange(0);
+      if (v > 0)
+        midiControl.feed(c, (uint8_t)(v - 1));
+    }
+    midiControl.apply(runtime, rateSelect, ccChanged, ccRejected);
 
     // Plain text lines are shown as-is by serial plotters
     int fb = feedbackSwitch.load();
@@ -446,13 +499,15 @@ static void sensorTask(void *)
       heartTempo.setFeedback(fb);
       appliedFeedback = fb;
     }
-    int rate = rateSwitch.load();
+    int rate = rateSelect.effective();
     if (rate != appliedRate)
     {
       if (appliedRate == 99)
         Serial.printf("rate: %s", rateName(rate));
       else
         Serial.printf("rate: %s -> %s", rateName(appliedRate), rateName(rate));
+      if (rateSelect.overridden())
+        Serial.printf(" (cc%u=%u)", (unsigned)CC_RATE, (unsigned)rateSelect.ccValue());
       Serial.printf(" (%.3f %%/beat, tau %.0f s)\r\n", runtime.maxChangePerBeat(rate) * 100, runtime.tauSec(rate));
       appliedRate = rate;
       configChanged = true;

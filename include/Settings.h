@@ -121,6 +121,30 @@ constexpr uint8_t TEMPO_CC_CHANNEL = 16; // 1-16
 constexpr uint8_t TEMPO_CC = 20;         // 0-31 (20 is undefined in the MIDI spec)
 constexpr uint32_t TEMPO_CC_RESEND_MS = 2000; // also resend unchanged, for late listeners
 
+// --- Control from the DAW (incoming MIDI CC) ------------------------------------
+// The DAW can change some settings live by sending CCs to the device's MIDI port
+// (map a knob or an automation lane to them, see README "DAWs"). They go through
+// the same checks and live-apply rules as `set` and, like `set`, are not saved
+// until `save`. A CC only acts when its mapped value changes (a knob sends a
+// stream of CCs), and other channels, our own tempo CC pair (MIDI-thru in the
+// DAW can send it back) and every other message are ignored. The 0-127 range is
+// split into equal zones, one per value: 4 zones = 0-31, 32-63, 64-95, 96-127.
+constexpr bool CONTROL_CC_ENABLED = true;
+constexpr uint8_t CONTROL_CC_CHANNEL = 16;    // 1-16
+// step_beats: 0-31 -> 4, 32-63 -> 8, 64-95 -> 16, 96-127 -> 32. A length at or
+// below count_in_beats lowers count_in_beats to step_beats - 1 first (logged).
+constexpr uint8_t CC_STEP_BEATS = 21;
+constexpr int CC_STEP_BEATS_VALUES[] = {4, 8, 16, 32};
+// Rate preset: 0-42 slow, 43-85 medium, 86-127 fast. Overrides the rate switch
+// until the switch is moved again (the last change wins).
+constexpr uint8_t CC_RATE = 22;
+// feedback_offset_bpm: 0-127 -> 0 .. CC_FEEDBACK_OFFSET_MAX_BPM, linear, in 0.1 bpm steps.
+constexpr uint8_t CC_FEEDBACK_OFFSET = 23;
+constexpr float CC_FEEDBACK_OFFSET_MAX_BPM = 10;
+// tempo_multiplier: 0-63 -> 1, 64-127 -> 2.
+constexpr uint8_t CC_TEMPO_MULTIPLIER = 24;
+constexpr int CC_TEMPO_MULTIPLIER_VALUES[] = {1, 2};
+
 // --- Heart rate filter -------------------------------------------------------
 constexpr float START_BPM = 70;          // clock tempo at power-on, before the first lock
                                          // [runtime: start_bpm, applies after a restart]
@@ -242,5 +266,32 @@ static_assert(MAX_CLOCK_BPM >= VALID_MAX_BPM && MAX_CLOCK_BPM < 256,
               "MAX_CLOCK_BPM must be VALID_MAX_BPM .. 255: the tempo CC (bpm x 64, 14 bit) only reaches 255.98 bpm");
 static_assert(TEMPO_CC_CHANNEL >= 1 && TEMPO_CC_CHANNEL <= 16, "TEMPO_CC_CHANNEL must be 1-16");
 static_assert(TEMPO_CC <= 31, "TEMPO_CC must be 0-31 so that TEMPO_CC + 32 is its LSB");
+static_assert(CONTROL_CC_CHANNEL >= 1 && CONTROL_CC_CHANNEL <= 16, "CONTROL_CC_CHANNEL must be 1-16");
+constexpr bool isControlCc(uint8_t cc)
+{
+  return cc == CC_STEP_BEATS || cc == CC_RATE || cc == CC_FEEDBACK_OFFSET || cc == CC_TEMPO_MULTIPLIER;
+}
+static_assert(CC_STEP_BEATS <= 119 && CC_RATE <= 119 && CC_FEEDBACK_OFFSET <= 119 && CC_TEMPO_MULTIPLIER <= 119,
+              "control CCs must be 0-119 (120-127 are channel mode messages)");
+static_assert(CC_STEP_BEATS != CC_RATE && CC_STEP_BEATS != CC_FEEDBACK_OFFSET && CC_STEP_BEATS != CC_TEMPO_MULTIPLIER &&
+                  CC_RATE != CC_FEEDBACK_OFFSET && CC_RATE != CC_TEMPO_MULTIPLIER &&
+                  CC_FEEDBACK_OFFSET != CC_TEMPO_MULTIPLIER,
+              "control CCs must differ");
+static_assert(!isControlCc(TEMPO_CC) && !isControlCc(TEMPO_CC + 32),
+              "control CCs must differ from the tempo CC pair, which the DAW may send back");
+constexpr bool allPowersOfTwoUpTo64(const int *v, int n)
+{
+  return n == 0 || (v[0] >= 1 && v[0] <= 64 && (v[0] & (v[0] - 1)) == 0 && allPowersOfTwoUpTo64(v + 1, n - 1));
+}
+static_assert(allPowersOfTwoUpTo64(CC_STEP_BEATS_VALUES, sizeof(CC_STEP_BEATS_VALUES) / sizeof(int)),
+              "CC_STEP_BEATS_VALUES must be powers of two 1-64");
+static_assert(CC_FEEDBACK_OFFSET_MAX_BPM > 0 && CC_FEEDBACK_OFFSET_MAX_BPM <= 30,
+              "CC_FEEDBACK_OFFSET_MAX_BPM must be within feedback_offset_bpm's range (0-30)");
+constexpr bool allOneOrTwo(const int *v, int n)
+{
+  return n == 0 || ((v[0] == 1 || v[0] == 2) && allOneOrTwo(v + 1, n - 1));
+}
+static_assert(allOneOrTwo(CC_TEMPO_MULTIPLIER_VALUES, sizeof(CC_TEMPO_MULTIPLIER_VALUES) / sizeof(int)),
+              "CC_TEMPO_MULTIPLIER_VALUES must be 1 or 2");
 
 } // namespace settings
