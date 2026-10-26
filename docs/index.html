@@ -1,0 +1,1221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heart Rate To MIDI Settings</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 14S1 9.5 1 5.2A3.2 3.2 0 0 1 8 3.6a3.2 3.2 0 0 1 7 1.6C15 9.5 8 14 8 14z' fill='%23c8324b'/%3E%3C/svg%3E">
+<meta name="description"content="Change the runtime settings of the Heart Rate To MIDI device over Web Serial.">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --panel-2: #eef0f4;
+  --text: #1b1f24;
+  --muted: #5b6470;
+  --border: #d5d9e0;
+  --accent: #1d5fd1;
+  --accent-text: #ffffff;
+  --ok: #1b7a3a;
+  --warn-bg: #fff3cd;
+  --warn-text: #6b4a00;
+  --warn-border: #e6c25a;
+  --err: #b42318;
+  --err-bg: #fdecea;
+  --focus: #1d5fd1;
+  --c-hr: #c8324b;
+  --c-target: #7a7f87;
+  --c-tempo: #1d5fd1;
+  --c-clock: #c06a00;
+  --grid: #e3e6eb;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b;
+    --panel: #1d2127;
+    --panel-2: #262b33;
+    --text: #e6e9ee;
+    --muted: #9aa3ae;
+    --border: #353c46;
+    --accent: #6ea2ff;
+    --accent-text: #0d1117;
+    --ok: #5cc47f;
+    --warn-bg: #3a3014;
+    --warn-text: #f3d77d;
+    --warn-border: #7a6420;
+    --err: #ff8a80;
+    --err-bg: #3b1d1b;
+    --focus: #8fb8ff;
+    --c-hr: #ff6b81;
+    --c-target: #9aa3ae;
+    --c-tempo: #6ea2ff;
+    --c-clock: #f0a24a;
+    --grid: #2c323b;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+html { scroll-padding-top: 7.5rem; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+h1 { font-size: 1.25rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0 0 .5rem; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+a { color: var(--accent); }
+button, input, select { font: inherit; color: inherit; }
+button {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  border-radius: 6px;
+  padding: .35rem .75rem;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--err); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.small { padding: .1rem .5rem; font-size: .85rem; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+input[type=number], input[type=text], select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .3rem .45rem;
+  min-width: 0;
+}
+input[type=number] { width: 8.5rem; }
+input[type=checkbox] { width: 1.15rem; height: 1.15rem; accent-color: var(--accent); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+header.top {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: .6rem 1rem;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem;
+}
+header.top .conn { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-left: auto; }
+.status-dot { display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; background: var(--muted); margin-right: .35rem; vertical-align: middle; }
+.status-dot.on { background: var(--ok); }
+#status { color: var(--muted); }
+.banner {
+  margin: .75rem 1rem 0; padding: .6rem .8rem; border-radius: 8px;
+  border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-text);
+}
+.banner.error { border-color: var(--err); background: var(--err-bg); color: var(--err); }
+.savebar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem;
+  padding: .5rem 1rem; border-bottom: 1px solid var(--border); background: var(--panel-2);
+  position: sticky; top: var(--header-h, 3.2rem); z-index: 4;
+}
+#unsaved { font-weight: 600; }
+#unsaved.dirty { color: var(--warn-text); background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 999px; padding: .1rem .6rem; }
+#unsaved.clean { color: var(--muted); }
+.savebar .spacer { flex: 1; }
+
+main {
+  display: grid; gap: 1rem; padding: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  align-items: start;
+  max-width: 1400px; margin: 0 auto;
+}
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .9rem 1rem; }
+#live { position: sticky; top: calc(var(--header-h, 3.2rem) + 3.5rem); max-height: calc(100vh - var(--header-h, 3.2rem) - 4.5rem); overflow: auto; }
+@media (max-width: 900px) { #live { position: static; max-height: none; } }
+
+#settings .placeholder { color: var(--muted); }
+fieldset.group, details.group { border: 1px solid var(--border); border-radius: 10px; padding: .4rem 1rem .6rem; margin: 0 0 1rem; background: var(--panel); }
+fieldset.group > legend, details.group > summary { font-weight: 650; padding: 0 .3rem; }
+details.group > summary { cursor: pointer; padding: .3rem; }
+details.group > summary .note { font-weight: 400; color: var(--muted); }
+.field {
+  display: grid; gap: .1rem .75rem;
+  grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr);
+  padding: .6rem 0; border-top: 1px solid var(--border);
+}
+.group .field:first-of-type { border-top: 0; }
+@media (max-width: 560px) { .field { grid-template-columns: minmax(0, 1fr); } }
+.field label.name { font-weight: 600; }
+.field .key { display: block; color: var(--muted); font-family: var(--mono); font-size: .8rem; font-weight: 400; }
+.field .control { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; }
+.field .unit, .field .derived { color: var(--muted); }
+.field .desc { grid-column: 2; color: var(--muted); font-size: .88rem; }
+.field .meta { grid-column: 2; color: var(--muted); font-size: .82rem; }
+@media (max-width: 560px) { .field .desc, .field .meta, .field .msg { grid-column: 1; } }
+.field .msg { grid-column: 2; color: var(--err); font-size: .88rem; }
+.field .msg:empty { display: none; }
+.field.changed label.name::after { content: " \2022"; color: var(--warn-text); }
+.field.changed-ext .control { animation: flash 1.2s ease-out; }
+.field.busy .control { opacity: .6; }
+@keyframes flash { from { background: var(--warn-bg); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .field.changed-ext .control { animation: none; } }
+.field.has-error input, .field.has-error select { border-color: var(--err); }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr)); gap: .5rem; margin: 0 0 .75rem; }
+.stat { background: var(--panel-2); border-radius: 8px; padding: .4rem .6rem; }
+.stat dt { color: var(--muted); font-size: .78rem; }
+.stat dd { margin: 0; font-size: 1.15rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat dd small { font-size: .75rem; font-weight: 400; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; font-size: .82rem; color: var(--muted); margin: .25rem 0; }
+.legend span::before { content: ""; display: inline-block; width: .9rem; height: 3px; margin-right: .3rem; vertical-align: middle; background: var(--c); }
+.legend .dashed::before { background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px); }
+#chart { width: 100%; height: 170px; display: block; background: var(--panel-2); border-radius: 8px; }
+#log {
+  font-family: var(--mono); font-size: .78rem; line-height: 1.35;
+  background: var(--panel-2); border-radius: 8px; padding: .4rem .5rem;
+  height: 15rem; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: .5rem 0;
+}
+#log .sent { color: var(--accent); }
+#log .ok { color: var(--ok); }
+#log .err { color: var(--err); }
+#log .param { font-weight: 650; }
+#log .plot { color: var(--muted); }
+#log .note { color: var(--muted); font-style: italic; }
+.row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.row input[type=text] { flex: 1; min-width: 8rem; font-family: var(--mono); }
+.hint { color: var(--muted); font-size: .85rem; }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; max-width: 32rem; }
+dialog::backdrop { background: rgb(0 0 0 / .45); }
+dialog .row { justify-content: flex-end; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<header class="top" id="top">
+  <h1>Heart Rate To MIDI <span style="font-weight:400;color:var(--muted)">settings</span></h1>
+  <div class="conn">
+    <span id="status" role="status" aria-live="polite"><span class="status-dot" aria-hidden="true"></span>Not connected</span>
+    <label id="dtrWrap" hidden title="Some USB CDC stacks only send while DTR is set"><input type="checkbox" id="dtr"> Set DTR</label>
+    <button id="connect" class="primary" type="button">Connect</button>
+    <button id="demo" type="button">Try without a device</button>
+    <button id="disconnect" type="button" hidden>Disconnect</button>
+  </div>
+</header>
+
+<div id="banners"></div>
+
+<div class="savebar" id="savebar" hidden>
+  <span id="unsaved" class="clean" role="status" aria-live="polite">All changes saved</span>
+  <span class="hint" id="saveHint">Changes apply at once; Save keeps them after a restart.</span>
+  <span class="spacer"></span>
+  <button id="reload" type="button" title="Read all values from the device again (get)">Reload</button>
+  <button id="restoreAll" type="button" class="danger">Restore all defaults…</button>
+  <button id="save" type="button" class="primary">Save</button>
+</div>
+
+<main>
+  <section id="settings" aria-label="Settings">
+    <div class="panel placeholder" id="intro">
+      <h2>Connect the device</h2>
+      <p>Plug in the device, press <b>Connect</b> and choose its serial port:</p>
+      <ul>
+        <li><b>DevKit</b> (two USB-C ports): the <b>UART</b> port with the CH343 chip, VID:PID <code>1A86:55D3</code> (often listed as "USB Single Serial").</li>
+        <li><b>XIAO ESP32-S3</b>: its only USB port.</li>
+      </ul>
+      <p>Only one program can use the port: close the PlatformIO serial monitor first.
+         Or press <b>Try without a device</b> to explore the page with a simulated device.</p>
+    </div>
+    <div id="form"></div>
+  </section>
+
+  <aside id="live" class="panel" aria-label="Live view">
+    <h2>Live</h2>
+    <dl class="stats" id="stats">
+      <div class="stat"><dt>Heart rate</dt><dd id="v-hr">–</dd></div>
+      <div class="stat"><dt>Target</dt><dd id="v-target">–</dd></div>
+      <div class="stat"><dt>Tempo</dt><dd id="v-tempo">–</dd></div>
+      <div class="stat"><dt>Clock</dt><dd id="v-clock">–</dd></div>
+      <div class="stat"><dt>State</dt><dd id="v-state">–</dd></div>
+      <div class="stat"><dt>Transport</dt><dd id="v-mode">–</dd></div>
+      <div class="stat"><dt>Feedback</dt><dd id="v-fb">–</dd></div>
+      <div class="stat"><dt>Rate</dt><dd id="v-rate">–</dd></div>
+      <div class="stat"><dt>Sensor</dt><dd id="v-raw">–</dd></div>
+      <div class="stat"><dt>MIDI drops</dt><dd id="v-drops">–</dd></div>
+    </dl>
+    <div class="legend" aria-hidden="true">
+      <span style="--c:var(--c-hr)">Heart rate</span>
+      <span class="dashed" style="--c:var(--c-target)">Target</span>
+      <span style="--c:var(--c-tempo)">Tempo</span>
+      <span style="--c:var(--c-clock)">Clock</span>
+    </div>
+    <canvas id="chart" role="img" aria-label="Chart of heart rate, target, tempo and clock tempo over the last two minutes"></canvas>
+    <div class="row" style="justify-content:space-between;margin-top:.6rem">
+      <h2 style="margin:0">Log</h2>
+      <label class="hint"><input type="checkbox" id="showPlot"> show <code>&gt;</code> lines</label>
+    </div>
+    <div id="log" role="log" aria-label="Serial log" tabindex="0"></div>
+    <form class="row" id="cmdForm" autocomplete="off">
+      <label for="cmd" class="visually-hidden">Command</label>
+      <input type="text" id="cmd" placeholder="command, e.g. help" disabled spellcheck="false">
+      <button type="submit" id="cmdSend" disabled>Send</button>
+    </form>
+    <div class="row" id="demoTools" hidden style="margin-top:.5rem">
+      <button type="button" id="demoCc" class="small">Simulate a DAW knob (MIDI CC)</button>
+      <span class="hint">Demo: changes a value from "outside", like a DAW would.</span>
+    </div>
+  </aside>
+</main>
+
+<dialog id="restoreDialog" aria-labelledby="restoreTitle">
+  <h2 id="restoreTitle">Restore all defaults?</h2>
+  <p>Every setting goes back to its default from <code>include/Settings.h</code> and applies at once.</p>
+  <p>It is <b>not permanent until saved</b>: a restart brings the saved values back. Choose <b>Restore and save</b> to make the defaults permanent.</p>
+  <div class="row">
+    <button type="button" value="cancel" id="rdCancel">Cancel</button>
+    <button type="button" value="restore" id="rdRestore">Restore (not saved)</button>
+    <button type="button" value="save" id="rdSave" class="primary">Restore and save</button>
+  </div>
+</dialog>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Line splitting: text chunks in, complete lines (without \r\n) out
+// ---------------------------------------------------------------------------
+class LineSplitter {
+  constructor(onLine) { this.buf = ''; this.onLine = onLine; }
+  push(text) {
+    this.buf += text;
+    let i;
+    while ((i = this.buf.indexOf('\n')) >= 0) {
+      const line = this.buf.slice(0, i).replace(/\r/g, '');
+      this.buf = this.buf.slice(i + 1);
+      this.onLine(line);
+    }
+    if (this.buf.length > 4096) this.buf = this.buf.slice(-1024); // garbage without newlines
+  }
+  reset() { this.buf = ''; }
+}
+
+// ---------------------------------------------------------------------------
+// Transports: Web Serial and the in-page demo device share one interface:
+//   open(), write(text), close(), onText(chunk), onClose(reason)
+// ---------------------------------------------------------------------------
+class SerialTransport {
+  constructor(port) { this.port = port; this.reader = null; this.keepReading = true; this.kind = 'serial'; }
+  async open() {
+    await this.port.open({ baudRate: 115200, bufferSize: 8192 });
+    // DevKit: DTR/RTS drive the auto-reset circuit (would hold the board in reset).
+    try { await this.port.setSignals({ dataTerminalReady: false, requestToSend: false }); }
+    catch (e) { console.warn('setSignals failed', e); }
+    this.loopDone = this.readLoop();
+  }
+  async setDtr(on) { await this.port.setSignals({ dataTerminalReady: on, requestToSend: false }); }
+  info() {
+    const i = this.port.getInfo ? this.port.getInfo() : {};
+    if (i.usbVendorId === undefined) return '';
+    const h = (n) => n.toString(16).toUpperCase().padStart(4, '0');
+    return h(i.usbVendorId) + ':' + h(i.usbProductId ?? 0);
+  }
+  async readLoop() {
+    const decoder = new TextDecoder();
+    while (this.port.readable && this.keepReading) {
+      this.reader = this.port.readable.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          if (value) this.onText(decoder.decode(value, { stream: true }));
+        }
+      } catch (e) {
+        // Framing/buffer errors are not fatal: the loop gets a new readable
+        if (this.keepReading) this.onNote('read error: ' + e.message);
+      } finally {
+        this.reader.releaseLock();
+        this.reader = null;
+      }
+    }
+    if (this.keepReading) this.onClose('the port closed (device unplugged?)');
+  }
+  async write(text) {
+    const w = this.port.writable.getWriter();
+    try { await w.write(new TextEncoder().encode(text)); } finally { w.releaseLock(); }
+  }
+  async close() {
+    this.keepReading = false;
+    try { if (this.reader) await this.reader.cancel(); } catch (e) { /* ignore */ }
+    try { await this.loopDone; } catch (e) { /* ignore */ }
+    try { await this.port.close(); } catch (e) { /* ignore */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Device: one command at a time; waits for its "ok"/"err" line
+// ---------------------------------------------------------------------------
+class Device {
+  constructor() {
+    this.transport = null;
+    this.chain = Promise.resolve();
+    this.pending = null;
+    this.lineListeners = [];
+    this.splitter = new LineSplitter((l) => this.handleLine(l));
+  }
+  attach(transport) {
+    this.transport = transport;
+    this.splitter.reset();
+    transport.onText = (t) => this.splitter.push(t);
+  }
+  detach() {
+    if (this.pending) this.finish({ ok: false, error: 'disconnected' });
+    this.transport = null;
+  }
+  onLine(fn) { this.lineListeners.push(fn); }
+  emit(line, kind) { for (const fn of this.lineListeners) fn(line, kind); }
+  handleLine(line) {
+    const p = this.pending;
+    let kind = 'line';
+    if (p && !line.startsWith('>')) {
+      const m = /^(ok|err)(?:\s|$)/.exec(line);
+      if (m) {
+        // A stray "ok" (e.g. the late reply to a timed-out command) is not ours
+        if (m[1] === 'err' || !p.expect || p.expect.test(line)) {
+          kind = m[1] === 'ok' ? 'reply-ok' : 'reply-err';
+          this.emit(line, kind);
+          this.finish(m[1] === 'ok'
+            ? { ok: true, line, info: p.info }
+            : { ok: false, line, info: p.info, error: line.replace(/^err\s*/, '') });
+          return;
+        }
+      } else {
+        p.info.push(line);
+      }
+    }
+    this.emit(line, kind);
+  }
+  finish(result) {
+    const p = this.pending;
+    if (!p) return;
+    clearTimeout(p.timer);
+    this.pending = null;
+    p.resolve(result);
+  }
+  // Resolves to { ok, line, info[], error }; never rejects.
+  command(cmd, { timeout = 2000, expect = null } = {}) {
+    const run = () => new Promise((resolve) => {
+      if (!this.transport) { resolve({ ok: false, error: 'not connected', info: [] }); return; }
+      this.pending = { cmd, info: [], expect, resolve, timer: null };
+      this.pending.timer = setTimeout(() => {
+        this.emit('(no reply to "' + cmd + '" within ' + timeout / 1000 + ' s)', 'note');
+        this.finish({ ok: false, error: 'no reply from the device (timeout)', timeout: true, info: [] });
+      }, timeout);
+      this.emit(cmd, 'sent');
+      this.transport.write(cmd + '\n').catch((e) => this.finish({ ok: false, error: 'write failed: ' + e.message, info: [] }));
+    });
+    const result = this.chain.then(run);
+    this.chain = result.then(() => {}, () => {});
+    return result;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Demo device: the same protocol, simulated in the page (mirrors lib/Params)
+// ---------------------------------------------------------------------------
+const DEMO_DEFS = [
+  ['tempo_multiplier', 'int', 1, 1, 2, 'clock tempo = heart rate tempo x this (2 = double time)'],
+  ['step_beats', 'int', 16, 1, 64, 'stepped mode: beats the tempo holds (power of two)'],
+  ['count_in_beats', 'int', 4, 0, 63, 'stepped mode: LED count-in beats before a step (0 = none)'],
+  ['beats_per_bar', 'int', 4, 1, 16, 'transport LED: beats per bar (downbeat flash)'],
+  ['rate_slow_max_change', 'float', 0.00075, 0.0001, 0.02, 'rate slow: max tempo change per beat (fraction)'],
+  ['rate_slow_tau_sec', 'float', 40, 1, 300, 'rate slow: heart rate smoothing time (s)'],
+  ['rate_medium_max_change', 'float', 0.0015, 0.0001, 0.02, 'rate medium: max tempo change per beat (fraction)'],
+  ['rate_medium_tau_sec', 'float', 25, 1, 300, 'rate medium: heart rate smoothing time (s)'],
+  ['rate_fast_max_change', 'float', 0.004, 0.0001, 0.02, 'rate fast: max tempo change per beat (fraction)'],
+  ['rate_fast_tau_sec', 'float', 12, 1, 300, 'rate fast: heart rate smoothing time (s)'],
+  ['feedback_offset_bpm', 'float', 5, 0, 30, 'feedback -/+: target offset from the heart rate'],
+  ['steer_low_bpm', 'float', 55, 30, 220, 'feedback -: never steer the target below this'],
+  ['steer_high_bpm', 'float', 130, 30, 220, 'feedback +: never steer the target above this'],
+  ['start_bpm', 'float', 70, 40, 180, 'clock tempo at power-on (applies after a restart)'],
+  ['caution_above_bpm', 'float', 100, 60, 180, 'readings above this need a smooth series or agreement'],
+  ['caution_step_bpm', 'float', 8, 1, 40, 'max step from the last kept reading for a smooth series'],
+  ['gate_floor_bpm', 'float', 8, 1, 40, 'locked: readings this close to recent ones always pass'],
+  ['gate_max_bpm', 'float', 12, 1, 60, 'locked: readings further away never pass directly'],
+  ['agree_tol_bpm', 'float', 4, 0.5, 20, 'readings within this of their median agree'],
+  ['lock_timeout_polls', 'int', 8, 2, 100, 'polls without an accepted reading before a lock drops'],
+  ['invalid_to_no_finger', 'int', 5, 1, 50, 'readings without heart rate before no finger'],
+  ['led_level', 'int', 16, 3, 255, 'sensor LED brightness'],
+  ['led_show_every_miss', 'bool', 1, 0, 1, 'sensor LED: amber on every missed reading'],
+  ['transport_led_level', 'int', 16, 3, 255, 'transport LED: downbeat flash brightness'],
+  ['stopped_level', 'int', 3, 1, 255, 'transport LED: brightness while stopped'],
+].map(([name, type, def, min, max, help]) => ({ name, type, def: Math.fround(def), min: Math.fround(min), max: Math.fround(max), help }));
+// a < b (or a <= b when orEqual), like Params.cpp RULES
+const DEMO_RULES = [['count_in_beats', 'step_beats', false], ['steer_low_bpm', 'steer_high_bpm', false],
+                    ['gate_floor_bpm', 'gate_max_bpm', true], ['invalid_to_no_finger', 'lock_timeout_polls', false]];
+
+class DemoTransport {
+  constructor() {
+    this.kind = 'demo';
+    this.values = {};
+    this.saved = {};
+    for (const d of DEMO_DEFS) this.values[d.name] = this.saved[d.name] = d.def;
+    this.sim = { t: 0, hrTrue: 74, hr: 70, tempo: 70, target: 70, state: 1, ticks: 0, fb: 0, rate: 0, mode: 0 };
+    this.ccTurn = 0;
+  }
+  info() { return 'simulated'; }
+  async open() {
+    this.out('feedback: follow');
+    this.out('rate: medium (0.150 %/beat, tau 25 s)');
+    this.out('params: 0 saved value(s) loaded, type help for commands');
+    this.first = setTimeout(() => this.tick(), 700);
+    this.timer = setInterval(() => this.tick(), 4000);
+  }
+  async close() { clearTimeout(this.first); clearInterval(this.timer); this.closed = true; }
+  // Device output arrives a little later, in odd-sized chunks, like serial does
+  out(line) {
+    const text = line + '\r\n';
+    const cut = Math.max(1, Math.floor(Math.random() * text.length));
+    setTimeout(() => { if (!this.closed) { this.onText(text.slice(0, cut)); this.onText(text.slice(cut)); } }, 15);
+  }
+  def(name) { return DEMO_DEFS.find((d) => d.name === name); }
+  format(d, v) {
+    if (d.type === 'bool') return v ? 'true' : 'false';
+    if (d.type === 'int') return String(Math.trunc(v));
+    return String(parseFloat(Math.fround(v).toPrecision(6))); // like %g
+  }
+  parse(d, text) {
+    if (d.type === 'bool') {
+      const t = text.toLowerCase();
+      if (['true', 'on', '1'].includes(t)) return 1;
+      if (['false', 'off', '0'].includes(t)) return 0;
+      throw d.name + ': must be true or false';
+    }
+    if (d.type === 'int') {
+      if (!/^[+-]?\d+$/.test(text)) throw d.name + ': must be a whole number';
+      return Math.max(-1e6, Math.min(1e6, parseInt(text, 10)));
+    }
+    const x = Number(text);
+    if (text.trim() === '' || !isFinite(x)) throw d.name + ': must be a number';
+    return Math.fround(x);
+  }
+  check(d, v, next) {
+    const pow2 = (x) => x > 0 && (x & (x - 1)) === 0;
+    if (d.name === 'step_beats' && !(Number.isInteger(v) && pow2(v) && v <= d.max)) throw d.name + ': must be a power of two 1..' + d.max;
+    if (d.type === 'bool' && v !== 0 && v !== 1) throw d.name + ': must be true or false';
+    if (d.type === 'int' && !Number.isInteger(v)) throw d.name + ': must be a whole number';
+    if (!isFinite(v) || v < d.min || v > d.max) {
+      throw d.type === 'float' ? `${d.name}: must be ${this.format(d, d.min)}..${this.format(d, d.max)}` : `${d.name}: must be ${d.min}..${d.max}`;
+    }
+    for (const [a, b, orEqual] of DEMO_RULES) {
+      if (orEqual ? next[a] <= next[b] : next[a] < next[b]) continue;
+      const va = this.format(this.def(a), next[a]), vb = this.format(this.def(b), next[b]);
+      if (d.name === b) throw `${b}: must be ${orEqual ? 'at least' : 'above'} ${a} (${va})`;
+      throw `${a}: must be ${orEqual ? 'at most' : 'below'} ${b} (${vb})`;
+    }
+  }
+  apply(d, v, source) {
+    const old = this.values[d.name];
+    this.check(d, v, { ...this.values, [d.name]: v });
+    this.values[d.name] = v;
+    if (old !== v) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}${source ? ' (' + source + ')' : ''}`);
+    return old !== v;
+  }
+  paramLine(d) {
+    return `param ${d.name} ${d.type} ${this.format(d, this.values[d.name])} min=${this.format(d, d.min)} max=${this.format(d, d.max)} default=${this.format(d, d.def)} "${d.help}"`;
+  }
+  async write(text) {
+    for (const line of text.split(/\r?\n|\r/)) if (line.trim()) setTimeout(() => this.command(line.trim()), 10);
+  }
+  command(line) {
+    const [cmd, a, b, extra] = line.split(/\s+/);
+    const known = ['help', 'get', 'set', 'save', 'reset'];
+    try {
+      if (cmd === 'help' && !a) {
+        for (const h of ['help', 'get', 'get <name>', 'set <name> <value>', 'save', 'reset', 'reset <name>']) this.out('help ' + h);
+        this.out('ok help');
+      } else if (cmd === 'get' && !b) {
+        if (!a) { for (const d of DEMO_DEFS) this.out(this.paramLine(d)); this.out('ok get count=' + DEMO_DEFS.length); }
+        else { const d = this.find(a); this.out(this.paramLine(d)); this.out('ok get ' + a); }
+      } else if (cmd === 'set' && b && !extra) {
+        const d = this.find(a);
+        const v = this.parse(d, b);
+        const old = this.values[d.name];
+        this.check(d, v, { ...this.values, [d.name]: v });
+        this.values[d.name] = v;
+        this.out(`ok ${d.name}=${this.format(d, v)}`);   // the device logs the change after the reply
+        if (old !== v) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}`);
+      } else if (cmd === 'save' && !a) {
+        this.saved = { ...this.values };
+        this.out('ok saved');
+      } else if (cmd === 'reset' && !b) {
+        if (a) {
+          const d = this.find(a);
+          const old = this.values[d.name];
+          this.check(d, d.def, { ...this.values, [d.name]: d.def });
+          this.values[d.name] = d.def;
+          this.out(`ok ${d.name}=${this.format(d, d.def)}`);
+          if (old !== d.def) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, d.def)}`);
+        } else {
+          for (const d of DEMO_DEFS) {
+            const old = this.values[d.name];
+            this.values[d.name] = d.def;
+            if (old !== d.def) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, d.def)}`);
+          }
+          this.out('ok reset');
+        }
+      } else if (known.includes(cmd)) {
+        this.out(`err ${cmd}: wrong arguments (try help)`);
+      } else {
+        this.out(`err unknown command ${cmd} (try help)`);
+      }
+    } catch (e) {
+      this.out('err ' + (typeof e === 'string' ? e : e.message));
+    }
+  }
+  find(name) {
+    const d = this.def(name);
+    if (!d) throw `unknown parameter ${name} (try get)`;
+    return d;
+  }
+  // Like a DAW knob: control CCs on channel 16 (see Settings.h)
+  simulateCc() {
+    const turn = this.ccTurn++ % 3;
+    const cc = Math.floor(Math.random() * 128);
+    try {
+      if (turn === 0) {
+        this.apply(this.def('feedback_offset_bpm'), Math.fround(Math.round(cc / 127 * 100) / 10), 'cc23=' + cc);
+      } else if (turn === 1) {
+        const v = [4, 8, 16, 32][cc >> 5];
+        const sb = this.def('step_beats'), ci = this.def('count_in_beats');
+        if (this.values.count_in_beats >= v) this.apply(ci, v - 1, 'cc21=' + cc);
+        if (this.apply(sb, v, 'cc21=' + cc)) this.out(`clock: step_beats ${v}, tempo_multiplier ${this.values.tempo_multiplier} in effect`);
+      } else {
+        const v = cc < 64 ? 1 : 2;
+        if (this.apply(this.def('tempo_multiplier'), v, 'cc24=' + cc)) this.out(`clock: step_beats ${this.values.step_beats}, tempo_multiplier ${v} in effect`);
+      }
+    } catch (e) {
+      this.out(`param: cc refused: ${e}`);
+    }
+  }
+  tick() {
+    const s = this.sim, v = this.values;
+    s.ticks++; s.t += 4;
+    const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.4;
+    s.hrTrue += (72 + 9 * Math.sin(s.t / 50) - s.hrTrue) * 0.15 + gauss();
+    const raw = Math.round(s.hrTrue + gauss() * 1.5);
+    const states = ['NoSensor', 'NoFinger', 'Acquiring', 'Locked'];
+    const next = s.ticks < 2 ? 1 : s.ticks < 4 ? 2 : 3;
+    if (next !== s.state) { this.out(`state: ${states[s.state]} -> ${states[next]}`); s.state = next; }
+    const tau = v.rate_medium_tau_sec;
+    if (s.state >= 2) s.hr += (raw - s.hr) * (1 - Math.exp(-4 / tau));
+    s.target = s.hr + s.fb * v.feedback_offset_bpm;
+    if (s.state === 3) {
+      const beats = s.tempo / 60 * 4;
+      const maxStep = s.tempo * v.rate_medium_max_change * beats;
+      s.tempo += Math.max(-maxStep, Math.min(maxStep, s.target - s.tempo));
+    }
+    const clock = Math.min(240, s.tempo * v.tempo_multiplier);
+    const ok = s.state === 3 && Math.random() > 0.1 ? 1 : 0;
+    this.out(`>${s.state >= 2 ? 'Raw:' + raw + ',' : ''}HR:${s.hr.toFixed(1)},Target:${s.target.toFixed(1)},Tempo:${s.tempo.toFixed(2)},Clock:${clock.toFixed(2)},State:${s.state},Ok:${ok},Fb:${s.fb},Rate:${s.rate},Mode:${s.mode},Drops:0`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Presentation hints (the form itself is built from the `get` output)
+// ---------------------------------------------------------------------------
+const GROUPS = [
+  { id: 'tempo', title: 'Tempo & stepping', match: (n) => ['tempo_multiplier', 'step_beats', 'count_in_beats', 'beats_per_bar', 'start_bpm'].includes(n) },
+  { id: 'rate', title: 'Rate presets', match: (n) => n.startsWith('rate_') },
+  { id: 'feedback', title: 'Feedback', match: (n) => n === 'feedback_offset_bpm' || n.startsWith('steer_') },
+  { id: 'leds', title: 'LEDs', match: (n) => n.startsWith('led_') || n === 'transport_led_level' || n === 'stopped_level' },
+  { id: 'other', title: 'Other', match: () => false },
+  { id: 'filter', title: 'Heart rate filter', advanced: true, note: 'advanced', match: (n) => /^(caution_|gate_)/.test(n) || ['agree_tol_bpm', 'lock_timeout_polls', 'invalid_to_no_finger'].includes(n) },
+];
+const LABELS = {
+  tempo_multiplier: 'Tempo multiplier', step_beats: 'Step length', count_in_beats: 'Count-in', beats_per_bar: 'Beats per bar',
+  start_bpm: 'Start tempo',
+  rate_slow_max_change: 'Slow: max change', rate_slow_tau_sec: 'Slow: smoothing',
+  rate_medium_max_change: 'Medium: max change', rate_medium_tau_sec: 'Medium: smoothing',
+  rate_fast_max_change: 'Fast: max change', rate_fast_tau_sec: 'Fast: smoothing',
+  feedback_offset_bpm: 'Feedback offset', steer_low_bpm: 'Steer floor (−)', steer_high_bpm: 'Steer ceiling (+)',
+  caution_above_bpm: 'Caution above', caution_step_bpm: 'Caution max step', gate_floor_bpm: 'Gate floor', gate_max_bpm: 'Gate max',
+  agree_tol_bpm: 'Agreement tolerance', lock_timeout_polls: 'Lock timeout', invalid_to_no_finger: 'Misses to "no finger"',
+  led_level: 'Sensor LED brightness', led_show_every_miss: 'Show every missed reading',
+  transport_led_level: 'Transport LED brightness', stopped_level: 'Stopped glow',
+};
+const labelFor = (n) => LABELS[n] || n.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+function unitFor(n) {
+  if (n.endsWith('_bpm')) return 'bpm';
+  if (n.endsWith('_sec')) return 's';
+  if (n.endsWith('_polls')) return 'polls (× 4 s)';
+  if (n === 'invalid_to_no_finger') return 'readings (× 4 s)';
+  if (n.endsWith('_beats') || n === 'beats_per_bar') return 'beats';
+  if (n.endsWith('_level')) return 'of 255';
+  return '';
+}
+function derivedFor(n, value) {
+  const x = Number(value);
+  if (n.endsWith('_max_change') && isFinite(x)) return '= ' + +(x * 100).toPrecision(3) + ' % per beat';
+  if (n === 'step_beats' && isFinite(x) && x >= 4 && x % 4 === 0) return '= ' + x / 4 + ' bar' + (x === 4 ? '' : 's') + ' of 4/4';
+  return '';
+}
+function floatStep(min, max) {
+  const range = max - min;
+  if (!(range > 0)) return 'any';
+  return String(+Math.pow(10, Math.floor(Math.log10(range)) - 2).toPrecision(1));
+}
+
+// ---------------------------------------------------------------------------
+// App state and UI
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const device = new Device();
+const state = {
+  connected: false,
+  transport: null,
+  params: new Map(),     // name -> { name, type, value, min, max, def, help }
+  savedValues: new Map(), // values at the last load/save, for the per-field "changed" mark
+  unsaved: false,
+  fields: new Map(),     // name -> { root, input, msg, resetBtn, meta, derived }
+  lastLineAt: 0,
+  history: [],           // { t, hr, target, tempo, clock }
+  loading: false,
+};
+
+const PARAM_RE = /^param (\S+) (\S+) (\S+) min=(\S+) max=(\S+) default=(\S+) "(.*)"$/;
+const CHANGE_RE = /^param: (\S+) (\S+) -> (\S+)(?: \((.*)\))?$/;
+
+function banner(text, kind = 'warn', id = null) {
+  if (id) { const old = document.getElementById(id); if (old) old.remove(); }
+  const div = document.createElement('div');
+  div.className = 'banner' + (kind === 'error' ? ' error' : '');
+  div.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  if (id) div.id = id;
+  if (text instanceof Node) div.append(text); else div.textContent = text;
+  $('banners').append(div);
+  return div;
+}
+function clearBanner(id) { const b = document.getElementById(id); if (b) b.remove(); }
+
+function setStatus(text, on) {
+  $('status').innerHTML = '';
+  const dot = document.createElement('span');
+  dot.className = 'status-dot' + (on ? ' on' : '');
+  dot.setAttribute('aria-hidden', 'true');
+  $('status').append(dot, text);
+}
+
+function setUnsaved(dirty) {
+  state.unsaved = dirty;
+  const u = $('unsaved');
+  u.className = dirty ? 'dirty' : 'clean';
+  u.textContent = dirty ? 'Unsaved changes' : 'All changes saved';
+  $('saveHint').textContent = dirty
+    ? 'Active now, but a restart brings the saved values back. Save to keep them.'
+    : 'Changes apply at once; Save keeps them after a restart.';
+}
+
+function updateControls() {
+  const c = state.connected;
+  $('connect').hidden = c;
+  $('demo').hidden = c;
+  $('disconnect').hidden = !c;
+  $('savebar').hidden = !c;
+  $('cmd').disabled = !c;
+  $('cmdSend').disabled = !c;
+  $('demoTools').hidden = !(c && state.transport && state.transport.kind === 'demo');
+  if (!c) $('dtrWrap').hidden = true;
+  for (const f of state.fields.values()) { f.input.disabled = !c; f.resetBtn.disabled = !c || f.isDefault; }
+  for (const id of ['save', 'reload', 'restoreAll']) $(id).disabled = !c;
+  // keep the sticky save bar below the header
+  document.documentElement.style.setProperty('--header-h', $('top').offsetHeight + 'px');
+}
+
+// ---------- log ----------
+const LOG_MAX = 400;
+function log(text, cls) {
+  const box = $('log');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = text;
+  if (cls === 'plot' && !$('showPlot').checked) div.hidden = true;
+  box.append(div);
+  while (box.childElementCount > LOG_MAX) box.firstElementChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+$('showPlot').addEventListener('change', () => {
+  for (const d of $('log').querySelectorAll('.plot')) d.hidden = !$('showPlot').checked;
+  $('log').scrollTop = $('log').scrollHeight;
+});
+
+// ---------- incoming lines ----------
+device.onLine((line, kind) => {
+  state.lastLineAt = Date.now();
+  if (kind === 'sent') { log('→ ' + line, 'sent'); return; }
+  if (kind === 'note') { log(line, 'note'); return; }
+  if (line.startsWith('>')) { log(line, 'plot'); handlePlot(line); return; }
+  let cls = '';
+  if (kind === 'reply-ok') cls = 'ok';
+  else if (kind === 'reply-err') cls = 'err';
+  else if (line.startsWith('param:')) cls = 'param';
+  if (state.loading && line.startsWith('param ')) return; // the get listing is shown as the form
+  log(line, cls);
+  const m = CHANGE_RE.exec(line);
+  if (m) { onExternalChange(m[1], m[3], m[4]); return; }
+  if (/^params: \d+ saved value/.test(line) && state.connected && state.params.size && !state.loading) {
+    // The device restarted: its values were reloaded from flash
+    log('(device restarted: reloading values)', 'note');
+    loadAll();
+  }
+});
+
+function onExternalChange(name, value, source) {
+  const p = state.params.get(name);
+  setUnsaved(true);
+  if (!p) { loadAll(); return; } // a parameter we don't know yet: rebuild the form
+  const changed = p.value !== value;
+  p.value = value;
+  const f = state.fields.get(name);
+  if (!f) return;
+  // Don't overwrite what the user is typing in this very field
+  const typing = document.activeElement === f.input && f.input.type === 'number' && f.input.value !== f.shown;
+  if (!typing) showValue(name);
+  else refreshMeta(name);
+  if (changed && source) {
+    f.root.classList.remove('changed-ext');
+    void f.root.offsetWidth;
+    f.root.classList.add('changed-ext');
+  }
+}
+
+// ---------- live panel ----------
+const STATE_NAMES = ['No sensor', 'No finger', 'Acquiring', 'Locked'];
+const MODE_NAMES = { '-1': 'Stop', 0: 'Run', 1: 'Stepped' };
+const FB_NAMES = { '-1': '− (calm)', 0: 'Follow', 1: '+ (lift)' };
+const RATE_NAMES = { '-1': 'Slow', 0: 'Medium', 1: 'Fast' };
+function handlePlot(line) {
+  const v = {};
+  for (const part of line.slice(1).split(',')) {
+    const i = part.indexOf(':');
+    if (i > 0) v[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  const num = (k) => (v[k] !== undefined && isFinite(Number(v[k])) ? Number(v[k]) : null);
+  const bpm = (x, digits) => (x === null ? '–' : x.toFixed(digits));
+  const set = (id, html) => { $(id).innerHTML = html; };
+  const st = num('State');
+  const locked = st === 3;
+  set('v-hr', st !== null && st < 2 ? '–' : bpm(num('HR'), 1) + ' <small>bpm</small>');
+  set('v-target', bpm(num('Target'), 1) + ' <small>bpm</small>');
+  set('v-tempo', bpm(num('Tempo'), 2) + ' <small>bpm</small>');
+  set('v-clock', bpm(num('Clock'), 2) + ' <small>bpm</small>');
+  $('v-state').textContent = st === null ? '–' : (STATE_NAMES[st] || 'State ' + st);
+  $('v-mode').textContent = v.Mode === undefined ? '–' : (MODE_NAMES[v.Mode] || v.Mode);
+  $('v-fb').textContent = v.Fb === undefined ? '–' : (FB_NAMES[v.Fb] || v.Fb);
+  $('v-rate').textContent = v.Rate === undefined ? '–' : (RATE_NAMES[v.Rate] || v.Rate);
+  $('v-raw').innerHTML = num('Raw') !== null ? num('Raw') + ' <small>bpm' + (v.Ok === '1' ? ', ok' : locked ? ', rejected' : '') + '</small>'
+                                             : '<small>no reading</small>';
+  $('v-drops').textContent = num('Drops') ?? '–';
+  const now = Date.now();
+  state.history.push({ t: now, hr: st !== null && st < 2 ? null : num('HR'), target: num('Target'), tempo: num('Tempo'), clock: num('Clock') });
+  while (state.history.length && state.history[0].t < now - 125000) state.history.shift();
+  drawChart();
+}
+function resetLive() {
+  for (const id of ['v-hr', 'v-target', 'v-tempo', 'v-clock', 'v-state', 'v-mode', 'v-fb', 'v-rate', 'v-raw', 'v-drops']) $(id).textContent = '–';
+  state.history = [];
+  drawChart();
+}
+
+function drawChart() {
+  const canvas = $('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  const color = (n) => css.getPropertyValue(n).trim();
+  const series = [['hr', '--c-hr', []], ['target', '--c-target', [4, 3]], ['tempo', '--c-tempo', []], ['clock', '--c-clock', []]];
+  const span = 120000, now = Date.now();
+  const pad = { l: 34, r: 8, t: 8, b: 18 };
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillStyle = color('--muted');
+  const values = [];
+  for (const p of state.history) for (const [k] of series) if (p[k] !== null && p[k] !== undefined) values.push(p[k]);
+  if (!values.length) {
+    ctx.textAlign = 'center';
+    ctx.fillText(state.connected ? 'waiting for data…' : 'no data', w / 2, h / 2);
+    return;
+  }
+  let lo = Math.min(...values), hi = Math.max(...values);
+  const mid = (lo + hi) / 2;
+  if (hi - lo < 10) { lo = mid - 5; hi = mid + 5; }
+  const stepY = hi - lo > 60 ? 20 : hi - lo > 25 ? 10 : 5;
+  lo = Math.floor(lo / stepY) * stepY; hi = Math.ceil(hi / stepY) * stepY;
+  const x = (t) => pad.l + (w - pad.l - pad.r) * (1 - (now - t) / span);
+  const y = (v) => pad.t + (h - pad.t - pad.b) * (1 - (v - lo) / (hi - lo));
+  ctx.strokeStyle = color('--grid'); ctx.lineWidth = 1; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let g = lo; g <= hi + 1e-9; g += stepY) {
+    ctx.beginPath(); ctx.moveTo(pad.l, y(g)); ctx.lineTo(w - pad.r, y(g)); ctx.stroke();
+    ctx.fillText(String(g), pad.l - 4, y(g));
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  for (const s of [120, 90, 60, 30, 0]) ctx.fillText(s ? '−' + s + ' s' : 'now', Math.min(x(now - s * 1000), w - 14), h - 4);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(pad.l, 0, w - pad.l - pad.r, h); ctx.clip();
+  for (const [k, c, dash] of series) {
+    ctx.strokeStyle = color(c); ctx.lineWidth = 2; ctx.setLineDash(dash); ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let pen = false;
+    for (const p of state.history) {
+      if (p[k] === null || p[k] === undefined) { pen = false; continue; }
+      if (pen) ctx.lineTo(x(p.t), y(p[k])); else ctx.moveTo(x(p.t), y(p[k]));
+      pen = true;
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+new ResizeObserver(() => drawChart()).observe($('chart'));
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawChart);
+
+// ---------- the form ----------
+function parseParamLine(line) {
+  const m = PARAM_RE.exec(line);
+  if (!m) return null;
+  return { name: m[1], type: m[2], value: m[3], min: m[4], max: m[5], def: m[6], help: m[7] };
+}
+
+function buildForm() {
+  const form = $('form');
+  form.innerHTML = '';
+  state.fields.clear();
+  const byGroup = new Map(GROUPS.map((g) => [g.id, []]));
+  for (const p of state.params.values()) {
+    const g = GROUPS.find((gr) => gr.match(p.name)) || GROUPS.find((gr) => gr.id === 'other');
+    byGroup.get(g.id).push(p);
+  }
+  for (const g of GROUPS) {
+    const list = byGroup.get(g.id);
+    if (!list.length) continue;
+    let box;
+    if (g.advanced) {
+      box = document.createElement('details');
+      box.className = 'group';
+      const sum = document.createElement('summary');
+      sum.innerHTML = '';
+      sum.append(g.title + ' ');
+      const note = document.createElement('span'); note.className = 'note'; note.textContent = '(' + g.note + ')';
+      sum.append(note);
+      box.append(sum);
+    } else {
+      box = document.createElement('fieldset');
+      box.className = 'group';
+      const lg = document.createElement('legend'); lg.textContent = g.title; box.append(lg);
+    }
+    for (const p of list) box.append(buildField(p));
+    form.append(box);
+  }
+  updateControls();
+}
+
+function buildField(p) {
+  const id = 'f-' + p.name;
+  const root = document.createElement('div');
+  root.className = 'field';
+  const label = document.createElement('label');
+  label.className = 'name';
+  label.htmlFor = id;
+  label.textContent = labelFor(p.name);
+  const key = document.createElement('span'); key.className = 'key'; key.textContent = p.name;
+  label.append(key);
+
+  const control = document.createElement('div'); control.className = 'control';
+  let input;
+  const min = Number(p.min), max = Number(p.max);
+  if (p.type === 'bool') {
+    input = document.createElement('input'); input.type = 'checkbox';
+  } else if (p.name === 'step_beats' && p.type === 'int') {
+    input = document.createElement('select');
+    for (let v = 1; v <= max; v *= 2) if (v >= min) input.add(new Option(String(v), String(v)));
+  } else if (p.name === 'tempo_multiplier' && p.type === 'int' && max - min <= 3) {
+    input = document.createElement('select');
+    for (let v = min; v <= max; v++) input.add(new Option('×' + v + (v === 1 ? ' (normal)' : v === 2 ? ' (double time)' : ''), String(v)));
+  } else if (p.type === 'int' || p.type === 'float') {
+    input = document.createElement('input'); input.type = 'number';
+    if (isFinite(min)) input.min = p.min;
+    if (isFinite(max)) input.max = p.max;
+    input.step = p.type === 'int' ? '1' : floatStep(min, max);
+    input.inputMode = p.type === 'int' ? 'numeric' : 'decimal';
+  } else {
+    input = document.createElement('input'); input.type = 'text';
+  }
+  input.id = id;
+  input.dataset.name = p.name;
+  control.append(input);
+  const unit = unitFor(p.name);
+  if (unit && input.tagName === 'INPUT' && input.type !== 'checkbox') {
+    const u = document.createElement('span'); u.className = 'unit'; u.textContent = unit; control.append(u);
+  }
+  const derived = document.createElement('span'); derived.className = 'derived'; control.append(derived);
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button'; resetBtn.className = 'small'; resetBtn.textContent = 'Default';
+  resetBtn.setAttribute('aria-label', 'Back to default: ' + labelFor(p.name));
+  control.append(resetBtn);
+
+  const desc = document.createElement('div'); desc.className = 'desc'; desc.id = id + '-desc'; desc.textContent = p.help;
+  const meta = document.createElement('div'); meta.className = 'meta'; meta.id = id + '-meta';
+  const msg = document.createElement('div'); msg.className = 'msg'; msg.id = id + '-msg'; msg.setAttribute('aria-live', 'polite');
+  input.setAttribute('aria-describedby', [desc.id, meta.id, msg.id].join(' '));
+  root.append(label, control, desc, meta, msg);
+
+  const f = { root, input, msg, resetBtn, meta, derived, shown: '', isDefault: true };
+  state.fields.set(p.name, f);
+  showValue(p.name);
+
+  const commit = () => sendSet(p.name);
+  input.addEventListener('change', commit);
+  if (input.type === 'number' || input.type === 'text') {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { showValue(p.name); setMsg(p.name, ''); }
+    });
+    input.addEventListener('input', () => { f.derived.textContent = derivedFor(p.name, input.value); });
+  }
+  resetBtn.addEventListener('click', () => sendReset(p.name));
+  return root;
+}
+
+function inputValue(f) {
+  if (f.input.type === 'checkbox') return f.input.checked ? 'true' : 'false';
+  return f.input.value.trim();
+}
+function showValue(name) {
+  const p = state.params.get(name), f = state.fields.get(name);
+  if (!p || !f) return;
+  if (f.input.type === 'checkbox') f.input.checked = p.value === 'true';
+  else {
+    if (f.input.tagName === 'SELECT' && ![...f.input.options].some((o) => o.value === p.value)) f.input.add(new Option(p.value, p.value));
+    f.input.value = p.value;
+  }
+  f.shown = p.value;
+  refreshMeta(name);
+}
+function refreshMeta(name) {
+  const p = state.params.get(name), f = state.fields.get(name);
+  f.isDefault = p.value === p.def;
+  f.resetBtn.disabled = !state.connected || f.isDefault;
+  const range = p.type === 'bool' ? '' : ` · range ${p.min}–${p.max}`;
+  const saved = state.savedValues.get(name);
+  const changed = saved !== undefined && saved !== p.value;
+  f.root.classList.toggle('changed', changed);
+  f.meta.textContent = `Default ${p.def}${range}` + (changed ? ` · saved value ${saved} (not saved yet)` : '');
+  f.derived.textContent = derivedFor(name, f.input.type === 'checkbox' ? '' : f.input.value);
+}
+function setMsg(name, text) {
+  const f = state.fields.get(name);
+  if (!f) return;
+  f.msg.textContent = text;
+  f.root.classList.toggle('has-error', !!text);
+  f.input.setAttribute('aria-invalid', text ? 'true' : 'false');
+}
+
+async function sendSet(name) {
+  const f = state.fields.get(name), p = state.params.get(name);
+  const value = inputValue(f);
+  if (value === p.value) { setMsg(name, ''); return; }
+  if (value === '' || /\s/.test(value)) {
+    setMsg(name, value === '' ? 'Enter a value.' : 'No spaces allowed.');
+    showValue(name);
+    return;
+  }
+  f.root.classList.add('busy');
+  const r = await device.command(`set ${name} ${value}`, { expect: new RegExp('^ok ' + name + '=') });
+  f.root.classList.remove('busy');
+  if (r.ok) {
+    const v = r.line.slice(('ok ' + name + '=').length);
+    if (v !== p.value) setUnsaved(true);
+    p.value = v;
+    setMsg(name, '');
+    showValue(name);
+  } else {
+    setMsg(name, humanError(name, r.error));
+    showValue(name); // back to the device's value
+  }
+}
+async function sendReset(name) {
+  const f = state.fields.get(name), p = state.params.get(name);
+  f.root.classList.add('busy');
+  const r = await device.command(`reset ${name}`, { expect: new RegExp('^ok ' + name + '=') });
+  f.root.classList.remove('busy');
+  if (r.ok) {
+    const v = r.line.slice(('ok ' + name + '=').length);
+    if (v !== p.value) setUnsaved(true);
+    p.value = v;
+    setMsg(name, '');
+    showValue(name);
+  } else {
+    setMsg(name, humanError(name, r.error));
+  }
+}
+function humanError(name, error) {
+  // "step_beats: must be ..." -> "Must be ..."
+  const e = error.startsWith(name + ': ') ? error.slice(name.length + 2) : error;
+  return e.charAt(0).toUpperCase() + e.slice(1);
+}
+
+async function loadAll() {
+  if (state.loading) return;
+  state.loading = true;
+  try {
+    let r;
+    for (let attempt = 0; attempt < 4 && state.connected; attempt++) {
+      r = await device.command('get', { timeout: 3000, expect: /^ok get count=/ });
+      if (r.ok || !r.timeout) break;
+    }
+    if (!state.connected) return;
+    if (!r || !r.ok) {
+      banner('Could not read the settings: ' + (r ? r.error : 'not connected') +
+        '. Is this the right port, and is the device running the firmware with runtime settings?', 'error', 'loadError');
+      return;
+    }
+    clearBanner('loadError');
+    const params = new Map();
+    for (const line of r.info) { const p = parseParamLine(line); if (p) params.set(p.name, p); }
+    state.params = params;
+    state.savedValues = new Map([...params].map(([n, p]) => [n, p.value]));
+    $('intro').hidden = true;
+    buildForm();
+    setUnsaved(false);
+  } finally {
+    state.loading = false;
+  }
+}
+
+async function save() {
+  $('save').disabled = true;
+  const r = await device.command('save', { timeout: 5000, expect: /^ok saved/ });
+  $('save').disabled = !state.connected;
+  if (r.ok) {
+    state.savedValues = new Map([...state.params].map(([n, p]) => [n, p.value]));
+    for (const n of state.fields.keys()) refreshMeta(n);
+    setUnsaved(false);
+    clearBanner('saveError');
+  } else {
+    banner('Save failed: ' + r.error, 'error', 'saveError');
+  }
+}
+
+async function restoreAll(andSave) {
+  const r = await device.command('reset', { expect: /^ok reset/ });
+  if (!r.ok) { banner('Restore defaults failed: ' + r.error, 'error', 'saveError'); return; }
+  const saved = state.savedValues;
+  await loadAll();
+  state.savedValues = saved;                 // still the saved values, until Save
+  for (const n of state.fields.keys()) refreshMeta(n);
+  const differs = [...state.params].some(([n, p]) => saved.get(n) !== p.value);
+  setUnsaved(differs);
+  if (andSave) await save();
+}
+
+// ---------- connect / disconnect ----------
+async function connect(transport) {
+  state.transport = transport;
+  device.attach(transport);
+  transport.onClose = (reason) => { banner('Disconnected: ' + reason, 'error', 'connError'); disconnect(); };
+  transport.onNote = (text) => log(text, 'note');
+  state.lastLineAt = 0;
+  try {
+    await transport.open();
+  } catch (e) {
+    device.detach();
+    state.transport = null;
+    let msg = e.message;
+    if (e.name === 'NetworkError' || e.name === 'InvalidStateError') msg += ' The port may be in use by another program (close the PlatformIO serial monitor).';
+    banner('Could not open the port: ' + msg, 'error', 'connError');
+    return;
+  }
+  clearBanner('connError');
+  state.connected = true;
+  const info = transport.info();
+  setStatus(transport.kind === 'demo' ? 'Demo device (simulated)' : 'Connected' + (info ? ' (' + info + ')' : ''), true);
+  log(transport.kind === 'demo' ? '(demo device connected)' : '(port opened at 115200 baud' + (info ? ', ' + info : '') + ')', 'note');
+  updateControls();
+  if (transport.kind === 'serial') {
+    const openedAt = Date.now();
+    setTimeout(() => {
+      if (state.connected && state.transport === transport && state.lastLineAt < openedAt) {
+        $('dtrWrap').hidden = false;
+        updateControls();
+        banner('No data from the device yet. On a USB CDC port (XIAO) some systems only send while DTR is set: try "Set DTR" (top right). ' +
+               'On the DevKit, make sure you chose the UART (CH343) port.', 'warn', 'dtrHint');
+      }
+    }, 2000);
+  }
+  await loadAll();
+}
+
+async function disconnect() {
+  if (!state.connected && !state.transport) return;
+  const t = state.transport;
+  state.connected = false;
+  state.transport = null;
+  device.detach();
+  if (t) { t.onClose = () => {}; await t.close(); }
+  setStatus('Not connected', false);
+  log('(disconnected)', 'note');
+  clearBanner('dtrHint');
+  $('dtr').checked = false;
+  updateControls();
+  resetLive();
+}
+
+$('connect').addEventListener('click', async () => {
+  let port;
+  try { port = await navigator.serial.requestPort(); }
+  catch (e) { if (e.name !== 'NotFoundError') banner('No port: ' + e.message, 'error', 'connError'); return; }
+  await connect(new SerialTransport(port));
+});
+$('demo').addEventListener('click', () => connect(new DemoTransport()));
+$('disconnect').addEventListener('click', () => { clearBanner('connError'); disconnect(); });
+$('dtr').addEventListener('change', async () => {
+  const t = state.transport;
+  if (!t || !t.setDtr) return;
+  try { await t.setDtr($('dtr').checked); log('(DTR ' + ($('dtr').checked ? 'set' : 'cleared') + ')', 'note'); clearBanner('dtrHint'); if (!state.params.size) loadAll(); }
+  catch (e) { banner('Could not change DTR: ' + e.message, 'error', 'connError'); }
+});
+$('save').addEventListener('click', save);
+$('reload').addEventListener('click', () => loadAll());
+$('demoCc').addEventListener('click', () => { if (state.transport && state.transport.simulateCc) state.transport.simulateCc(); });
+
+const dlg = $('restoreDialog');
+$('restoreAll').addEventListener('click', () => dlg.showModal());
+$('rdCancel').addEventListener('click', () => dlg.close());
+$('rdRestore').addEventListener('click', () => { dlg.close(); restoreAll(false); });
+$('rdSave').addEventListener('click', () => { dlg.close(); restoreAll(true); });
+
+$('cmdForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const cmd = $('cmd').value.trim();
+  if (!cmd) return;
+  $('cmd').value = '';
+  await device.command(cmd, { timeout: 3000 });
+});
+
+if ('serial' in navigator) {
+  navigator.serial.addEventListener('disconnect', (e) => {
+    if (state.transport && state.transport.port === e.target) { banner('The device was unplugged.', 'error', 'connError'); disconnect(); }
+  });
+} else {
+  $('connect').disabled = true;
+  banner(window.isSecureContext
+    ? 'This browser has no Web Serial: use Chrome or Edge on a desktop computer (Firefox and Safari do not support it). "Try without a device" still works.'
+    : 'Web Serial needs a secure page: open this page over https (GitHub Pages) or http://localhost, in Chrome or Edge on a desktop computer.',
+    'error', 'noSerial');
+}
+
+setUnsaved(false);
+updateControls();
+window.addEventListener('resize', updateControls);
+if (new URLSearchParams(location.search).has('demo')) connect(new DemoTransport());
+</script>
+</body>
+</html>
