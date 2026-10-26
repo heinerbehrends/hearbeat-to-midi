@@ -1,5 +1,5 @@
-// Line-based commands for the runtime settings, for a serial terminal now and a
-// Web Serial settings page later. Pure C++, tested on the board.
+// Line-based commands for the runtime settings, for a serial terminal and the
+// Web Serial settings page (docs/index.html). Pure C++, tested on the board.
 //
 //   help                 list the commands
 //   get                  list all parameters

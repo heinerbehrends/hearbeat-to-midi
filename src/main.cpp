@@ -2,7 +2,7 @@
 //
 // Core 0: sensor task polls the SEN0344 every 4 s and runs HeartTempo.
 // Core 1: clock task sends 24 PPQN MIDI clock at the current tempo, always.
-//         loop() reads the switches and drives the status LED.
+//         loop() reads the switches and drives both LEDs.
 //
 // Settings to tweak live in include/Settings.h; the ones marked [runtime] can
 // also be changed over the serial port, and a few by MIDI CC from the DAW (both
@@ -662,9 +662,7 @@ static void readSwitches(uint32_t now)
   }
 }
 
-// Status LED: red blinking = no sensor, red = no finger (tempo held, clock still
-// running), amber = acquiring (or, with LED_SHOW_EVERY_MISS, last reading
-// missing/rejected), green = locked and following the heart rate.
+// Sensor-state LED (colours: README "Controls and LED", levels: Settings.h)
 static void updateLed(uint32_t now)
 {
   static uint32_t lastColor = 0xFFFFFFFF;
@@ -703,9 +701,7 @@ static void updateLed(uint32_t now)
   }
 }
 
-// Transport LED: dim white when stopped; while playing a flash on every beat
-// (brighter on downbeats) in the tempo's direction colour, with a growing
-// count-in before each step in stepped mode. See Settings.h.
+// Transport LED (behaviour: README "Controls and LED", colours and timing: Settings.h)
 static void updateTransportLed(uint32_t now)
 {
   static uint32_t lastBeat = UINT32_MAX, beatAtMs = 0, lastColor = 0xFFFFFFFF;

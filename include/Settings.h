@@ -26,7 +26,7 @@ constexpr const char *DEVICE_NAME = "Heart Rate To MIDI";
 // its two pin numbers.
 #if defined(BOARD_XIAO)
 // Seeed XIAO ESP32-S3 Plus, all on the front pins (D-number = silkscreen).
-// Left free: D2 (GPIO3, a strapping pin) and D6 (GPIO43, boot messages).
+// Left free: D6 (GPIO43, boot messages).
 constexpr int SENSOR_SDA = 5;            // D4 (labelled SDA)
 constexpr int SENSOR_SCL = 6;            // D5 (labelled SCL)
 constexpr int FEEDBACK_PIN_MINUS = 1;    // D0
@@ -69,7 +69,9 @@ struct RatePreset
 {
   const char *name;
   // Fastest the clock tempo may move, as a fraction of the tempo per beat.
-  // Listeners start noticing a continuous drift at ~0.0017-0.0027 (0.17-0.27 %).
+  // Listeners start noticing a continuous drift at ~0.0017-0.0027 (0.17-0.27 %;
+  // Madison & Merker 2004, Dahl & Granqvist 2003): medium stays just below, slow
+  // well below, fast is deliberately audible.
   // At 90 bpm: 0.00075 = 0.1 bpm/s, 0.0015 = 0.2 bpm/s, 0.004 = 0.54 bpm/s.
   float maxChangePerBeat;
   // Smoothing time of the heart rate estimate: how long it takes to cover ~63 %
@@ -97,7 +99,9 @@ constexpr uint32_t SWITCH_DEBOUNCE_MS = 30;
 constexpr bool TRANSPORT_SWITCH_INSTALLED = false;
 
 // Stepped mode: the clock tempo holds for this many beats (counted from Start) and
-// then jumps to wherever the glide has got to. 16 beats = 4 bars of 4/4.
+// then jumps to wherever the glide has got to. 16 beats = 4 bars of 4/4. The steps
+// are meant to be heard (sudden steps are noticed from ~2-6 %, Drake & Botte 1993),
+// so they land on phrase boundaries.
 // [runtime: step_beats, a power of two 1-64; a change applies on the next phrase
 // boundary of both the old and the new length, so the phrase grid stays in phase]
 constexpr int STEP_BEATS = 16;
@@ -143,6 +147,10 @@ constexpr uint8_t CC_TEMPO_MULTIPLIER = 24;
 constexpr int CC_TEMPO_MULTIPLIER_VALUES[] = {1, 2};
 
 // --- Heart rate filter -------------------------------------------------------
+// Sized from measured resting readings: scatter ~2.45 bpm SD, reading-to-reading
+// change 1.9 bpm on average, 5 at most. Hence agreement within +-4 bpm and an
+// outlier gate of 8-12 bpm. Recorded sessions are regression tests
+// (test_recorded_* in test/test_heart_tempo): re-run them after changing these.
 constexpr float START_BPM = 70;          // clock tempo at power-on, before the first lock
                                          // [runtime: start_bpm, applies after a restart]
 constexpr float VALID_MIN_BPM = 40;      // readings outside this range are ignored
@@ -156,7 +164,6 @@ constexpr float AGREE_TOL_BPM = 4;       // ...within this distance of each othe
 constexpr float GATE_FLOOR_BPM = 8;      // while locked, readings this close to recent ones always pass
                                          // [runtime: gate_floor_bpm, gate_max_bpm]
 constexpr float GATE_MAX_BPM = 12;       // ...and readings further away than this never pass directly
-                                         // (your resting scatter measured ~2.5 bpm SD)
 constexpr int LOCK_TIMEOUT_POLLS = 8;    // a lock without any accepted reading for this many polls
                                          // (x 4 s) drops back to acquiring; the tempo holds
                                          // [runtime: lock_timeout_polls]
@@ -178,6 +185,9 @@ constexpr int START_RETRY_AFTER_INVALID = 4;
 // byte 1). When the sensor is disturbed it drops SpO2 but keeps reporting a
 // drifting, too-high heart rate; this treats those readings like "no heart rate"
 // (they count toward "no finger", but don't trigger START_RETRY_AFTER_INVALID).
+// The flag is useful but not watertight (junk with the flag set has been seen),
+// hence the caution rule and the gate as well. After a disturbance the sensor's
+// own averaging lingers, so bad values can keep coming for a while.
 constexpr bool REQUIRE_SPO2_VALID = true;
 // Debug: also log the sensor's full 8-byte result as hex on every poll
 // (byte 0 = SpO2, 1 = SpO2 valid, 2-5 = heart rate, 7 = heart rate present).
