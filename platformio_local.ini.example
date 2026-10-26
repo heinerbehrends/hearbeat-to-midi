@@ -7,6 +7,10 @@
 ; Without platformio_local.ini, PlatformIO picks a port by itself, which can be
 ; the wrong one when other serial devices are connected.
 
+; The XIAO (env:xiao-s3-plus) usually needs no entry: its single USB port is
+; found automatically, also after the restart into download mode. If you set
+; one, use the port it shows while the firmware runs.
+
 [env:esp32-s3-n16r8]
 upload_port = COM4
 monitor_port = COM4

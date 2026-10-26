@@ -1,34 +1,68 @@
 # Enclosure (Hammond 1590A)
 
-Work in progress. So far: [`tray.scad`](tray.scad), an insulating plate that holds the ESP32 board in
-the lid. A drilling template for the top face (three Velleman 8016 switches, LED) and the end walls
-(two USB-C panel sockets) follows once those parts are measured.
+The build uses a **Seeed XIAO ESP32-S3 Plus** (21 × 17.8 mm). The ESP32-S3 DevKit clone stays the
+breadboard/development board. Both are built from the same code (PlatformIO environments
+`xiao-s3-plus` and `esp32-s3-n16r8`; pins per board in `include/Settings.h`).
 
-## Tray
+## Layout
 
-- Lies in the 2 mm recess inside the lid's lip; the lip guides the board's long edges, the corner
-  notches around the screw holes locate the plate lengthwise (`notch_r`: measure on the real lid,
-  sand the plate ends if it doesn't drop in).
-- Board on the plate, taped in the middle. Grooves take the pin stubs: remove the header plastic,
-  clip the stubs on the underside to ~0.6 mm, solder wires on the top side.
-- End stop at the antenna end, 0.3 mm below the PCB top so the module overhang clears it; open at
-  the USB end, so the board's UART port can take a cable with the lid off.
-- Print flat, PETG or PLA. Check that the board has no parts on its underside other than the pins.
+```
+ end wall A                       top face                          end wall B
+ ┌──────────────────────────────────────────────────────────────────────────┐
+ │ XIAO USB-C │  ═╪═ feedback   ═╪═ rate   ═╪═ transport   (LED)  │ sensor  │
+ │ (to laptop)│                                                   │ USB-C   │
+ └──────────────────────────────────────────────────────────────────────────┘
+   XIAO in its holder,                                    4-pin panel socket
+   21 mm deep                                             16 mm deep
+```
 
-## Height budget (inside height 25.4 mm from the rim to the top face)
+- **XIAO** in [`xiao_holder.scad`](xiao_holder.scad), glued inside end wall A, its own USB-C port
+  behind a plug-sized opening (13.5 × 7.5 mm, centre ≈ 6.8 mm above the rim: the model echoes the exact
+  height). No laptop panel socket needed; the XIAO has the CC resistors, so C-to-C cables work.
+- **Sensor socket** (4-pin USB-C, V/D−/D+/G, no CC) in end wall B, raised above the lid lip.
+- **Switches and LED** on the top face, in the middle: keep the switches ~22 mm from wall A
+  (XIAO + holder) and ~17 mm from wall B (socket).
 
-| | above the rim |
+## XIAO holder
+
+- Shelf under the board (pocket locates it, tape holds it), end stop at the far end, glue tab down
+  the end wall into the 1.8 mm gap in front of the lid lip; the holder clears the lip and the corner
+  bosses (22.5 mm free between them).
+- Before printing, **measure** `pcb_t`, `usb_overhang` (receptacle past the PCB edge) and
+  `usb_above_pcb` (USB-C centre above the PCB top); they set the wall opening height.
+- Check your USB-C cable's plug moulding fits the opening (`plug_w` × `plug_h`); the moulding has to
+  enter the wall for the plug to seat.
+- Glue it with the board in place and a cable plugged in through the wall, so it aligns itself.
+
+## Wiring (XIAO, front pins)
+
+| Pin | To |
 | --- | --- |
-| tray 1.2 + board 1.6 + tallest parts ~3.2 | ≈ 6.0 mm |
-| switch lugs (8016, 14.1 mm, wires soldered from the side) | down to ≈ 9.8 mm |
-| USB-C panel sockets in the end walls (body ~5.4 mm tall) | cutout centre ≈ 9.5–11.5 mm, above the board's ends |
+| D4 (GPIO5) | sensor socket D+ (SDA), + 4.7 kΩ to 3V3 |
+| D5 (GPIO6) | sensor socket D− (SCL), + 4.7 kΩ to 3V3 |
+| 3V3 / GND | sensor socket V / G, switch commons (GND) |
+| D0 / D1 | feedback switch − / + |
+| D8 / D9 | rate switch slow / fast |
+| D10 / D7 | transport switch stop / stepped |
+| D3 (GPIO4) | LED data via 330 Ω (LED powered from 5V via 1N4148) |
+| 5V | LED supply (through the diode) |
 
-Keep the switches ~15 mm away from the end walls (the sockets are 16 mm deep).
+D2 and D6 stay free (strapping pin / boot messages). **Only ever connect the sensor to the sensor
+socket:** a USB-A charger or port on an A-to-C cable would put 5 V onto the 3V3 line.
 
-## Sockets
+## Height (inside 25.4 mm from the rim to the top face)
 
-- **Laptop (MIDI):** 6-pin USB-C panel socket **with built-in 5.1 kΩ CC resistors**, wired to the
-  board's 5V, GND, GPIO19 (D−), GPIO20 (D+); twist D+/D−. Works with C-to-C and A-to-C cables.
-- **Sensor:** 4-pin USB-C panel socket (V, D−, D+, G, no CC): V from 3V3, D+ → GPIO17 (SDA),
-  D− → GPIO9 (SCL). **Only ever connect the sensor here.** A USB-A charger or port on an A-to-C
-  cable would put 5 V onto the 3V3 line.
+- XIAO holder: shelf 3.0–4.6, board up to ≈ 9 mm above the rim; switch lugs (14.1 mm + wires) end
+  ≈ 9.8 mm above the rim, so keep switches out of the XIAO's 21 mm.
+- Sensor socket body: cutout centre ≈ 9.5 mm above the rim.
+
+## Development with the XIAO
+
+One USB port carries MIDI and the serial log (USB CDC). `pio run -e xiao-s3-plus -t upload`
+restarts the board into download mode by itself (if that fails: hold B, tap R, release B).
+`pio device monitor -e xiao-s3-plus` shows the log; `pio test -e xiao-s3-plus` runs the tests.
+
+## DevKit tray (breadboard board, optional)
+
+[`tray.scad`](tray.scad) holds the 63 × 28 mm DevKit clone in the lid instead, if you ever build the
+box with it: plate in the lid recess, located by the corner notches, grooves for clipped pin stubs.

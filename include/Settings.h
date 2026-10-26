@@ -12,11 +12,38 @@ namespace settings
 // Windows may cache the old name: unplug and replug after changing it.
 constexpr const char *DEVICE_NAME = "Heart Rate To MIDI";
 
-// --- Feedback switch: − / 0 / + -------------------------------------------
-// Velleman 8016 (ON-OFF-ON). Middle terminal to GND, outer terminals to these
-// pins. If − and + come out the wrong way round, swap the two pin numbers.
+// --- Pins, per board ---------------------------------------------------------
+// The board is chosen by the PlatformIO environment (BOARD_XIAO is set by
+// env:xiao-s3-plus). Switches: Velleman 8016 (ON-OFF-ON), middle terminal to GND,
+// outer terminals to the two pins; if a switch reads the wrong way round, swap
+// its two pin numbers.
+#if defined(BOARD_XIAO)
+// Seeed XIAO ESP32-S3 Plus, all on the front pins (D-number = silkscreen).
+// Left free: D2 (GPIO3, a strapping pin) and D6 (GPIO43, boot messages).
+constexpr int SENSOR_SDA = 5;            // D4 (labelled SDA)
+constexpr int SENSOR_SCL = 6;            // D5 (labelled SCL)
+constexpr int FEEDBACK_PIN_MINUS = 1;    // D0
+constexpr int FEEDBACK_PIN_PLUS = 2;     // D1
+constexpr int RATE_PIN_SLOW = 7;         // D8
+constexpr int RATE_PIN_FAST = 8;         // D9
+constexpr int TRANSPORT_PIN_STOP = 9;    // D10
+constexpr int TRANSPORT_PIN_STEPPED = 44; // D7
+constexpr int LED_PIN = 4;               // D3, external WS2812D-F8 (the onboard LED is a plain one)
+#else
+// ESP32-S3-DevKitC-1 clone (YD-ESP32-S3), breadboard setup
+constexpr int SENSOR_SDA = 17;
+constexpr int SENSOR_SCL = 9;
 constexpr int FEEDBACK_PIN_MINUS = 4;
 constexpr int FEEDBACK_PIN_PLUS = 5;
+constexpr int RATE_PIN_SLOW = 6;
+constexpr int RATE_PIN_FAST = 7;
+constexpr int TRANSPORT_PIN_STOP = 15;
+constexpr int TRANSPORT_PIN_STEPPED = 16;
+// 21 = external WS2812D-F8. 48 = onboard LED (needs the RGB solder jumper bridged).
+constexpr int LED_PIN = 21;
+#endif
+
+// --- Feedback switch: − / 0 / + -------------------------------------------
 
 // How far − and + put the tempo target below/above the heart rate.
 constexpr float FEEDBACK_OFFSET_BPM = 5;
@@ -27,8 +54,6 @@ constexpr float STEER_HIGH_BPM = 130;
 
 // --- Rate switch: slow / medium / fast -------------------------------------
 // Second 8016, wired the same way. Centre = medium.
-constexpr int RATE_PIN_SLOW = 6;
-constexpr int RATE_PIN_FAST = 7;
 
 struct RatePreset
 {
@@ -55,8 +80,6 @@ constexpr uint32_t SWITCH_DEBOUNCE_MS = 30;
 // centre so flipping between the two running modes never passes through stop.
 // Starting sends Song Position 0 + Start, so the DAW starts from the top in phase;
 // stop sends Stop. The MIDI clock keeps running either way.
-constexpr int TRANSPORT_PIN_STOP = 15;
-constexpr int TRANSPORT_PIN_STEPPED = 16;
 // false until the switch is wired (an unwired switch would read "run"): the
 // board's BOOT button then cycles stop -> run -> stepped instead. Don't hold BOOT
 // while the board resets, that enters download mode.
@@ -96,8 +119,6 @@ constexpr float CAUTION_ABOVE_BPM = 100;
 constexpr float CAUTION_STEP_BPM = 8;
 
 // --- Sensor --------------------------------------------------------------------
-constexpr int SENSOR_SDA = 17;
-constexpr int SENSOR_SCL = 9;
 // The sensor computes a new value about every 4 s. Polling faster reads the same
 // value twice, and repeats would count as "agreeing" readings.
 constexpr uint32_t SENSOR_POLL_MS = 4000;
@@ -114,8 +135,6 @@ constexpr bool REQUIRE_SPO2_VALID = true;
 constexpr bool LOG_RAW_SENSOR_BYTES = false;
 
 // --- Status LED ------------------------------------------------------------------
-// 21 = external WS2812D-F8. 48 = onboard LED (needs the RGB solder jumper bridged).
-constexpr int LED_PIN = 21;
 constexpr uint8_t LED_LEVEL = 16;          // brightness 3-255; the WS2812D-F8 is very bright
 // true (testing): amber as soon as one reading is missing or rejected, even while
 // the tempo keeps following. false (stage): green for as long as the lock holds.

@@ -422,7 +422,10 @@ static void sensorTask(void *)
 void setup()
 {
   rgbLedWrite(LED_PIN, 0, 0, 0); // the LED keeps its last colour across resets
-  Serial.begin(115200);          // hardware UART (COM port), see platformio.ini
+  Serial.begin(115200); // DevKit: hardware UART (COM port); XIAO: USB CDC next to MIDI
+#if ARDUINO_USB_CDC_ON_BOOT
+  Serial.setTxTimeoutMs(0); // never stall the sensor task when no serial monitor is open
+#endif
 
   USB.productName(DEVICE_NAME);
   DeviceMIDI.begin();
