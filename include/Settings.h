@@ -163,6 +163,7 @@ static_assert(START_RETRY_AFTER_INVALID >= 1, "START_RETRY_AFTER_INVALID must be
 static_assert(SENSOR_POLL_MS >= 1000, "polling faster than 1 s only re-reads the same value");
 static_assert(LED_LEVEL >= 3, "LED_LEVEL below 3 makes amber look red");
 static_assert(STEP_BEATS >= 1, "STEP_BEATS must be at least 1");
+static_assert(VALID_MAX_BPM + FEEDBACK_OFFSET_BPM < 256, "the tempo CC (bpm x 64, 14 bit) only reaches 255.98 bpm");
 static_assert(TEMPO_CC_CHANNEL >= 1 && TEMPO_CC_CHANNEL <= 16, "TEMPO_CC_CHANNEL must be 1-16");
 static_assert(TEMPO_CC <= 31, "TEMPO_CC must be 0-31 so that TEMPO_CC + 32 is its LSB");
 

@@ -49,6 +49,7 @@ static std::atomic<int> feedbackSwitch{0}; // -1 = −, 0 = follow, +1 = +
 static std::atomic<int> rateSwitch{0};     // -1 = slow, 0 = medium, +1 = fast
 static std::atomic<int> transportWanted{MODE_STOP}; // from the switch, applied by the clock task
 static std::atomic<int> transportMode{MODE_STOP};   // what the clock task has applied
+static std::atomic<bool> transportStopSeen{false};  // a stop was wanted since the clock task last looked
 static std::atomic<uint32_t> clockSentIntervalUs{0}; // interval the clock actually uses (held in stepped mode)
 
 static uint32_t intervalFor(float bpm)
@@ -142,47 +143,80 @@ static bool hostListening()
   return tud_mounted() && !tud_suspended();
 }
 
+// All MIDI output happens in the clock task. Writes fail (return false) when the
+// 64-byte USB TX buffer is full because the host isn't draining it for a moment.
+
+// One clock tick. A full buffer gets ~1 ms of retries: the tick is a little late
+// rather than lost.
+static bool sendClockTick()
+{
+  int64_t giveUp = esp_timer_get_time() + 1000;
+  while (DeviceMIDI.write(MIDI_CLOCK) == 0)
+    if (esp_timer_get_time() > giveUp)
+      return false;
+  return true;
+}
+
 // Song Position Pointer is a 3-byte System Common message (USB-MIDI CIN 0x3)
-static void sendSongPositionZero()
+static bool sendSongPositionZero()
 {
   midiEventPacket_t p = {0x03, MIDI_SONG_POSITION, 0, 0};
-  DeviceMIDI.writePacket(&p);
+  return DeviceMIDI.writePacket(&p);
+}
+
+// Control change (USB-MIDI CIN 0xB); USBMIDI::controlChange doesn't report failure
+static bool sendCc(uint8_t cc, uint8_t value)
+{
+  midiEventPacket_t p = {0x0B, (uint8_t)(0xB0 | (TEMPO_CC_CHANNEL - 1)), cc, value};
+  return DeviceMIDI.writePacket(&p);
 }
 
 // Called right after a clock tick, so the next tick (a full interval later) is
-// the first beat. Song Position is only honoured while stopped, which the DAW is
-// whenever we get here.
-static void sendStartFromTop()
+// beat 1. Stop first: Song Position is only honoured while stopped, and after a
+// reconnect or a missed switch flick the DAW may still think it's playing.
+static bool sendStartFromTop()
 {
-  sendSongPositionZero();
-  DeviceMIDI.write(MIDI_START);
+  return DeviceMIDI.write(MIDI_STOP) && sendSongPositionZero() && DeviceMIDI.write(MIDI_START);
 }
 
-// Applies the wanted transport mode. Returns true when a Start was sent, i.e. the
-// next tick is beat 1.
-static bool handleTransport()
+// Applies the wanted transport mode. The mode (and so the tempo behaviour)
+// changes at once; Start/Stop that couldn't be sent stay pending and are retried
+// after the next tick. Returns true when a Start went out: the next tick is beat 1.
+static bool handleTransport(bool resync)
 {
-  static bool wasListening = false;
+  static bool wasListening = false, pendingStart = false, pendingStop = false;
   bool listening = hostListening();
+  bool reconnected = listening && !wasListening;
+  wasListening = listening;
   bool wasRunning = transportMode.load() != MODE_STOP;
   int wanted = transportWanted.load();
   bool run = wanted != MODE_STOP;
-  bool started = false;
+  // A run -> stop -> run flick shorter than one tick still restarts from the top
+  bool flicked = transportStopSeen.exchange(false) && run && wasRunning;
 
-  if (run && (!wasRunning || (listening && !wasListening)))
+  if (run && (!wasRunning || reconnected || flicked || resync))
   {
-    // Starting, or the host (re)connected while running: start it from the top
-    if (listening)
-      sendStartFromTop();
-    started = true;
+    pendingStart = true;
+    pendingStop = false;
   }
-  else if (!run && wasRunning && listening)
-    DeviceMIDI.write(MIDI_STOP);
+  else if (!run && (wasRunning || reconnected))
+  {
+    pendingStop = true; // also when reconnecting: the DAW may have missed our Stop
+    pendingStart = false;
+  }
   // run <-> stepped changes only the tempo mode, no transport messages
-
   transportMode.store(wanted);
-  wasListening = listening;
-  return started;
+
+  if (!listening)
+    return false;
+  if (pendingStart)
+  {
+    pendingStart = !sendStartFromTop();
+    return !pendingStart;
+  }
+  if (pendingStop)
+    pendingStop = !DeviceMIDI.write(MIDI_STOP);
+  return false;
 }
 
 static uint16_t tempoToCc(float bpm)
@@ -191,19 +225,28 @@ static uint16_t tempoToCc(float bpm)
 }
 
 // For DAWs that don't follow clock tempo (REAPER): send the tempo the clock is
-// actually using as a 14-bit CC pair when it changes, and every TEMPO_CC_RESEND_MS
+// actually using as a 14-bit CC pair when it changes, every TEMPO_CC_RESEND_MS,
+// and right after the host (re)connects. A pair that couldn't be sent is retried.
 static void sendTempoCc(uint32_t intervalUs)
 {
   static uint16_t lastSent = 0xFFFF;
   static int64_t lastSentUs = 0;
+  static bool wasListening = false;
+  bool listening = hostListening();
+  if (listening && !wasListening)
+    lastSent = 0xFFFF;
+  wasListening = listening;
+
   uint16_t v = tempoToCc(60e6f / ((float)intervalUs * PPQN));
   int64_t now = esp_timer_get_time();
-  if (!TEMPO_CC_ENABLED || !hostListening() || (v == lastSent && now - lastSentUs < TEMPO_CC_RESEND_MS * 1000LL))
+  if (!TEMPO_CC_ENABLED || !listening || (v == lastSent && now - lastSentUs < TEMPO_CC_RESEND_MS * 1000LL))
     return;
-  DeviceMIDI.controlChange(TEMPO_CC, v >> 7, TEMPO_CC_CHANNEL);
-  DeviceMIDI.controlChange(TEMPO_CC + 32, v & 0x7F, TEMPO_CC_CHANNEL);
-  lastSent = v;
-  lastSentUs = now;
+  // MSB then LSB; the receiver applies the value on the LSB
+  if (sendCc(TEMPO_CC, v >> 7) && sendCc(TEMPO_CC + 32, v & 0x7F))
+  {
+    lastSent = v;
+    lastSentUs = now;
+  }
 }
 
 // Advances a fixed phase by the current interval each tick, so tempo changes
@@ -214,11 +257,21 @@ static void clockTask(void *)
   const uint32_t ticksPerStep = STEP_BEATS * PPQN;
   int64_t next = esp_timer_get_time();
   uint32_t held = clockIntervalUs.load();
-  uint32_t tick = 0; // index of the next tick since Start (0 = beat 1)
+  bool gliding = true;
+  uint32_t tick = 0;     // index of the next tick since Start (0 = beat 1); counts
+                         // only ticks that went out, so it matches the DAW's count
+  uint32_t failRun = 0;  // ticks in a row that couldn't be sent
   for (;;)
   {
-    if (transportMode.load() != MODE_STEPPED)
-      held = clockIntervalUs.load(); // gliding: follow the live tempo every tick
+    int mode = transportMode.load();
+    if (mode == MODE_STEPPED)
+      gliding = false;
+    else if (mode == MODE_STOP)
+      gliding = true;
+    // (stepped -> run keeps holding until the next phrase boundary, where the
+    // held tempo meets the glide, so leaving stepped mode never jumps)
+    if (gliding)
+      held = clockIntervalUs.load();
     uint32_t interval = held;
     clockSentIntervalUs.store(interval);
     next += interval;
@@ -235,16 +288,33 @@ static void clockTask(void *)
 
     // While nobody is listening (unplugged, host asleep) don't queue ticks: they
     // would all arrive at once when the host comes back
-    if (hostListening() && DeviceMIDI.write(MIDI_CLOCK) == 0)
-      midiDrops.fetch_add(1);
+    bool resync = false;
+    if (hostListening())
+    {
+      if (sendClockTick())
+      {
+        // Step boundary: the tick just sent starts a new phrase, take the glide's
+        // current tempo for the intervals that follow
+        if (tick % ticksPerStep == 0)
+        {
+          held = clockIntervalUs.load();
+          if (mode == MODE_RUN)
+            gliding = true;
+        }
+        tick++;
+        // After a beat or more of lost ticks the DAW's position is unknown:
+        // restart it from the top so it's back in phase
+        resync = failRun >= (uint32_t)PPQN;
+        failRun = 0;
+      }
+      else
+      {
+        midiDrops.fetch_add(1);
+        failRun++;
+      }
+    }
 
-    // Step boundary: the tick just sent starts a new phrase, take the glide's
-    // current tempo for the intervals that follow
-    if (tick % ticksPerStep == 0)
-      held = clockIntervalUs.load();
-    tick++;
-
-    if (handleTransport())
+    if (handleTransport(resync))
       tick = 0;
     sendTempoCc(held);
   }
@@ -372,6 +442,13 @@ void setup()
   xTaskCreatePinnedToCore(sensorTask, "sensor", 8192, nullptr, 2, nullptr, 0);
 }
 
+static void setTransport(int mode)
+{
+  if (mode == MODE_STOP)
+    transportStopSeen.store(true); // so a quick stop-and-back isn't missed
+  transportWanted.store(mode);
+}
+
 static void readSwitches(uint32_t now)
 {
   static Switch3 feedback(SWITCH_DEBOUNCE_MS), rate(SWITCH_DEBOUNCE_MS);
@@ -384,7 +461,7 @@ static void readSwitches(uint32_t now)
   {
     static Switch3 transport(SWITCH_DEBOUNCE_MS);
     if (transport.update(digitalRead(TRANSPORT_PIN_STOP) == LOW, digitalRead(TRANSPORT_PIN_STEPPED) == LOW, now))
-      transportWanted.store(transport.position()); // -1 stop, 0 run, +1 stepped
+      setTransport(transport.position()); // -1 stop, 0 run, +1 stepped
   }
   else
   {
@@ -394,7 +471,7 @@ static void readSwitches(uint32_t now)
     if (bootButton.update(digitalRead(BOOT_BUTTON_PIN) == LOW, false, now) && bootButton.position() < 0)
     {
       int m = transportWanted.load();
-      transportWanted.store(m == MODE_STOP ? MODE_RUN : m == MODE_RUN ? MODE_STEPPED : MODE_STOP);
+      setTransport(m == MODE_STOP ? MODE_RUN : m == MODE_RUN ? MODE_STEPPED : MODE_STOP);
     }
   }
 }
