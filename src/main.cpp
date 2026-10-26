@@ -597,7 +597,10 @@ void setup()
   Serial.setRxBufferSize(512); // room for a few setting commands between reads
   Serial.begin(115200); // DevKit: hardware UART (COM port); XIAO: USB CDC next to MIDI
 #if ARDUINO_USB_CDC_ON_BOOT
-  Serial.setTxTimeoutMs(0); // never stall the sensor task when no serial monitor is open
+  // USB CDC drops what it can't send: nothing at all while the host has DTR clear
+  // (no monitor open), and with a 0 ms timeout also the tail of a line when the
+  // 64-byte FIFO is full. A short timeout lets a burst like `get` drain.
+  Serial.setTxTimeoutMs(20);
 #endif
 
   USB.productName(DEVICE_NAME);
@@ -616,6 +619,8 @@ void setup()
   if (!nvs.begin("hr2midi"))
     Serial.printf("params: NVS unavailable, using defaults\r\n");
   int loaded = runtime.load(nvs);
+  if (runtime.error()[0]) // the saved set breaks a rule (a default moved since the save)
+    Serial.printf("params: saved values ignored: %s\r\n", runtime.error());
   Serial.printf("params: %d saved value(s) loaded, type help for commands\r\n", loaded);
   publishParams();
   appliedStepBeats.store(runtime.getInt(params::STEP_BEATS));

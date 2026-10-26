@@ -667,6 +667,71 @@ void test_cc_rate_override(void)
 }
 
 #ifdef ARDUINO
+void test_parse_int_edge_cases(void)
+{
+  Params p;
+  float v;
+  TEST_ASSERT_TRUE(p.parse(LED_LEVEL, "+40", &v));
+  TEST_ASSERT_EQUAL_FLOAT(40, v);
+  TEST_ASSERT_TRUE(p.parse(LED_LEVEL, "-5", &v)); // parses, then fails the range check
+  TEST_ASSERT_FALSE(p.set(LED_LEVEL, v));
+  TEST_ASSERT_TRUE(p.parse(LED_LEVEL, "99999999999", &v)); // beyond long: clamped, then out of range
+  TEST_ASSERT_FALSE(p.set(LED_LEVEL, v));
+  TEST_ASSERT_FALSE(p.parse(LED_LEVEL, "0x10", &v));
+  TEST_ASSERT_FALSE(p.parse(LED_LEVEL, "", &v));
+  TEST_ASSERT_FALSE(p.parse(RATE_SLOW_MAX_CHANGE, "inf", &v));
+  TEST_ASSERT_FALSE(p.parse(RATE_SLOW_MAX_CHANGE, "", &v));
+  TEST_ASSERT_EQUAL(settings::LED_LEVEL, p.getInt(LED_LEVEL));
+}
+
+void test_load_of_inconsistent_set_names_the_rule(void)
+{
+  MemStore store;
+  store.version = SCHEMA_VERSION;
+  store.values["steer_low_bpm"] = 140; // above the default steer_high_bpm: as if that default moved
+  Params p;
+  TEST_ASSERT_EQUAL(0, p.load(store));
+  TEST_ASSERT_EQUAL_STRING("steer_low_bpm (140) must be below steer_high_bpm (130)", p.error());
+  // A load that works clears the message
+  store.values.clear();
+  TEST_ASSERT_EQUAL(0, p.load(store));
+  TEST_ASSERT_EQUAL_STRING("", p.error());
+}
+
+// A store whose writes fail (NVS full or unavailable)
+class FailingStore : public MemStore
+{
+public:
+  bool store(const char *, float) override { return false; }
+};
+
+void test_cmd_save_reports_a_store_failure(void)
+{
+  Params params;
+  FailingStore store;
+  std::vector<std::string> lines;
+  ParamConsole console(params, store, [&](const char *l) { lines.push_back(l); });
+  console.handleLine("set led_level 40");
+  console.handleLine("save");
+  TEST_ASSERT_EQUAL_STRING("err save failed", lines.back().c_str());
+  TEST_ASSERT_EQUAL(40, params.getInt(LED_LEVEL)); // the running value is kept
+}
+
+void test_cmd_reset_one_is_checked_like_set(void)
+{
+  Rig r;
+  r.run("set step_beats 32");
+  r.run("set count_in_beats 16");
+  // The default step length would not be above the count-in: refused, nothing changes
+  TEST_ASSERT_EQUAL_STRING("err step_beats: must be above count_in_beats (16)", r.run("reset step_beats").c_str());
+  TEST_ASSERT_EQUAL(32, r.params.getInt(STEP_BEATS));
+  r.changes.clear();
+  TEST_ASSERT_TRUE(startsWith(r.run("reset count_in_beats"), "ok count_in_beats="));
+  TEST_ASSERT_TRUE(startsWith(r.run("reset step_beats"), "ok step_beats="));
+  TEST_ASSERT_EQUAL(settings::STEP_BEATS, r.params.getInt(STEP_BEATS));
+  TEST_ASSERT_EQUAL(2, (int)r.changes.size());
+}
+
 void test_nvs_round_trip(void);
 #endif
 
@@ -696,6 +761,10 @@ static void runTests()
   RUN_TEST(test_cmd_help_and_reply_format);
   RUN_TEST(test_cmd_line_endings_and_whitespace);
   RUN_TEST(test_cmd_overlong_line_is_rejected);
+  RUN_TEST(test_parse_int_edge_cases);
+  RUN_TEST(test_load_of_inconsistent_set_names_the_rule);
+  RUN_TEST(test_cmd_save_reports_a_store_failure);
+  RUN_TEST(test_cmd_reset_one_is_checked_like_set);
   RUN_TEST(test_step_change_waits_for_common_boundary);
   RUN_TEST(test_tempo_multiplier_is_1_or_2);
   RUN_TEST(test_multiplier_change_lands_on_a_bar_line);

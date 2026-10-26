@@ -116,7 +116,8 @@ public:
 
   // Loads saved values. Values that are missing, out of range or from another
   // schema version keep their default; if the loaded set as a whole breaks a
-  // rule between parameters, all defaults are used. Returns how many values
+  // rule between parameters (a default moved in Settings.h since the save),
+  // all defaults are used and error() names the rule. Returns how many values
   // were loaded (0 = all defaults).
   int load(ParamStore &store);
   // Saves the values that differ from their default and removes the others, so

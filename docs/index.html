@@ -301,12 +301,22 @@ class SerialTransport {
   constructor(port) { this.port = port; this.reader = null; this.keepReading = true; this.kind = 'serial'; }
   async open() {
     await this.port.open({ baudRate: 115200, bufferSize: 8192 });
-    // DevKit: DTR/RTS drive the auto-reset circuit (would hold the board in reset).
-    try { await this.port.setSignals({ dataTerminalReady: false, requestToSend: false }); }
+    // A native USB CDC port (XIAO, Espressif VID 303A) only sends while the host
+    // has DTR set. A UART bridge (DevKit, CH343) is the opposite: there DTR/RTS
+    // drive the auto-reset circuit and would hold the board in reset.
+    this.dtr = this.isNativeUsb();
+    try { await this.setDtr(this.dtr); }
     catch (e) { console.warn('setSignals failed', e); }
     this.loopDone = this.readLoop();
   }
-  async setDtr(on) { await this.port.setSignals({ dataTerminalReady: on, requestToSend: false }); }
+  isNativeUsb() {
+    const i = this.port.getInfo ? this.port.getInfo() : {};
+    return i.usbVendorId === 0x303A;
+  }
+  async setDtr(on) {
+    await this.port.setSignals({ dataTerminalReady: on, requestToSend: false });
+    this.dtr = on;
+  }
   info() {
     const i = this.port.getInfo ? this.port.getInfo() : {};
     if (i.usbVendorId === undefined) return '';
@@ -694,6 +704,11 @@ function setStatus(text, on) {
   $('status').append(dot, text);
 }
 
+// True when any value differs from the one last loaded from flash or saved
+function anyUnsaved() {
+  return [...state.params].some(([n, p]) => state.savedValues.get(n) !== p.value);
+}
+
 function setUnsaved(dirty) {
   state.unsaved = dirty;
   const u = $('unsaved');
@@ -740,7 +755,7 @@ $('showPlot').addEventListener('change', () => {
 
 // ---------- incoming lines ----------
 device.onLine((line, kind) => {
-  state.lastLineAt = Date.now();
+  if (kind !== 'sent' && kind !== 'note') state.lastLineAt = Date.now(); // lines from the device only
   if (kind === 'sent') { log('→ ' + line, 'sent'); return; }
   if (kind === 'note') { log(line, 'note'); return; }
   if (line.startsWith('>')) { log(line, 'plot'); handlePlot(line); return; }
@@ -752,19 +767,23 @@ device.onLine((line, kind) => {
   log(line, cls);
   const m = CHANGE_RE.exec(line);
   if (m) { onExternalChange(m[1], m[3], m[4]); return; }
+  if (/^params: saved values ignored/.test(line)) {
+    // The saved set breaks a rule between values: a default in Settings.h moved since the save
+    banner('Device: ' + line.replace(/^params: /, '') + '. A default moved since the values were saved; set and save them again.', 'warn', 'loadWarn');
+  }
   if (/^params: \d+ saved value/.test(line) && state.connected && state.params.size && !state.loading) {
     // The device restarted: its values were reloaded from flash
     log('(device restarted: reloading values)', 'note');
-    loadAll();
+    loadAll({ fresh: true });
   }
 });
 
 function onExternalChange(name, value, source) {
   const p = state.params.get(name);
-  setUnsaved(true);
   if (!p) { loadAll(); return; } // a parameter we don't know yet: rebuild the form
   const changed = p.value !== value;
   p.value = value;
+  setUnsaved(anyUnsaved());
   const f = state.fields.get(name);
   if (!f) return;
   // Don't overwrite what the user is typing in this very field
@@ -1057,7 +1076,9 @@ function humanError(name, error) {
   return e.charAt(0).toUpperCase() + e.slice(1);
 }
 
-async function loadAll() {
+// fresh: the device's values are its saved ones (first load, device restart), so they
+// become the per-field "saved value" baseline; otherwise (Reload, restore) the baseline is kept.
+async function loadAll({ fresh = false } = {}) {
   if (state.loading) return;
   state.loading = true;
   try {
@@ -1075,11 +1096,12 @@ async function loadAll() {
     clearBanner('loadError');
     const params = new Map();
     for (const line of r.info) { const p = parseParamLine(line); if (p) params.set(p.name, p); }
+    if (fresh || !state.params.size) state.savedValues = new Map();
+    for (const [n, p] of params) if (!state.savedValues.has(n)) state.savedValues.set(n, p.value);
     state.params = params;
-    state.savedValues = new Map([...params].map(([n, p]) => [n, p.value]));
     $('intro').hidden = true;
     buildForm();
-    setUnsaved(false);
+    setUnsaved(anyUnsaved());
   } finally {
     state.loading = false;
   }
@@ -1102,12 +1124,7 @@ async function save() {
 async function restoreAll(andSave) {
   const r = await device.command('reset', { expect: /^ok reset/ });
   if (!r.ok) { banner('Restore defaults failed: ' + r.error, 'error', 'saveError'); return; }
-  const saved = state.savedValues;
-  await loadAll();
-  state.savedValues = saved;                 // still the saved values, until Save
-  for (const n of state.fields.keys()) refreshMeta(n);
-  const differs = [...state.params].some(([n, p]) => saved.get(n) !== p.value);
-  setUnsaved(differs);
+  await loadAll(); // keeps the saved values as the baseline, until Save
   if (andSave) await save();
 }
 
@@ -1135,17 +1152,19 @@ async function connect(transport) {
   log(transport.kind === 'demo' ? '(demo device connected)' : '(port opened at 115200 baud' + (info ? ', ' + info : '') + ')', 'note');
   updateControls();
   if (transport.kind === 'serial') {
+    $('dtr').checked = !!transport.dtr;
+    $('dtrWrap').hidden = false;
     const openedAt = Date.now();
     setTimeout(() => {
       if (state.connected && state.transport === transport && state.lastLineAt < openedAt) {
         $('dtrWrap').hidden = false;
         updateControls();
-        banner('No data from the device yet. On a USB CDC port (XIAO) some systems only send while DTR is set: try "Set DTR" (top right). ' +
+        banner('No data from the device yet. A native USB port (XIAO) only sends while DTR is set, a UART bridge (DevKit) needs it clear: try toggling "Set DTR" (top right). ' +
                'On the DevKit, make sure you chose the UART (CH343) port.', 'warn', 'dtrHint');
       }
     }, 2000);
   }
-  await loadAll();
+  await loadAll({ fresh: true });
 }
 
 async function disconnect() {
@@ -1161,6 +1180,14 @@ async function disconnect() {
   $('dtr').checked = false;
   updateControls();
   resetLive();
+  // Forget this device's values: the next connection starts from its device, not from here
+  state.params = new Map();
+  state.savedValues = new Map();
+  state.fields.clear();
+  $('form').innerHTML = '';
+  $('intro').hidden = false;
+  setUnsaved(false);
+  for (const id of ['loadError', 'saveError', 'loadWarn']) clearBanner(id);
 }
 
 $('connect').addEventListener('click', async () => {
@@ -1174,7 +1201,7 @@ $('disconnect').addEventListener('click', () => { clearBanner('connError'); disc
 $('dtr').addEventListener('change', async () => {
   const t = state.transport;
   if (!t || !t.setDtr) return;
-  try { await t.setDtr($('dtr').checked); log('(DTR ' + ($('dtr').checked ? 'set' : 'cleared') + ')', 'note'); clearBanner('dtrHint'); if (!state.params.size) loadAll(); }
+  try { await t.setDtr($('dtr').checked); log('(DTR ' + ($('dtr').checked ? 'set' : 'cleared') + ')', 'note'); clearBanner('dtrHint'); if (!state.params.size) loadAll({ fresh: true }); }
   catch (e) { banner('Could not change DTR: ' + e.message, 'error', 'connError'); }
 });
 $('save').addEventListener('click', save);

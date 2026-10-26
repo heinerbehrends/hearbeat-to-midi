@@ -46,7 +46,7 @@ then one `ok …` or `err …` line.
 | `set <name> <value>` | changes it at once (`ok step_beats=32`, or `err step_beats: must be a power of two 1..64`); not saved yet |
 | `save` | stores the current values, so they apply after a restart |
 | `reset` | all values back to the defaults in `include/Settings.h` (then `save`) |
-| `reset <name>` | one value back to its default (then `save`) |
+| `reset <name>` | one value back to its default (then `save`); checked like `set`, so it is refused if the default would break a rule with another value (`step_beats` below `count_in_beats`, …): reset that one first, or `reset` |
 
 - Changes are logged as `param: step_beats 16 -> 32`. While playing, a new `step_beats` starts on a
   phrase boundary of both lengths and `tempo_multiplier` on a bar line, so the DAW stays in phase.
@@ -71,7 +71,7 @@ MIDI port:
 
 | CC | Changes | Values |
 | --- | --- | --- |
-| 22 | rate preset | 0–42 slow, 43–85 medium, 86–127 fast; overrides the rate switch until the switch is moved again (the last change wins) |
+| 22 | rate preset | 0–42 slow, 43–85 medium, 86–127 fast; overrides the rate switch until the switch is moved again (the last change wins). After the switch moved, only a CC with a *different* value takes over again: a lane re-sending the same value at play start is ignored |
 | 23 | `feedback_offset_bpm` | 0–127 → 0–10 bpm, in 0.1 bpm steps |
 | 24 | `tempo_multiplier` | 0–63 → 1, 64–127 → 2 (double time) |
 

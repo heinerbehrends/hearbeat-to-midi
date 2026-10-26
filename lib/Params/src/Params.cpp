@@ -247,6 +247,7 @@ void Params::format(int id, float value, char *out, size_t size) const
 int Params::load(ParamStore &store)
 {
   resetAll();
+  err_[0] = 0;
   if (store.schema() != SCHEMA_VERSION)
     return 0;
   int loaded = 0;
@@ -261,12 +262,11 @@ int Params::load(ParamStore &store)
       loaded++;
     }
   }
-  if (!checkSet(v_, -1))
+  if (!checkSet(v_, -1)) // error() keeps the rule that failed
   {
     resetAll();
     return 0;
   }
-  err_[0] = 0;
   return loaded;
 }
 
