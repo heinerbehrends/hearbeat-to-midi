@@ -29,10 +29,12 @@ cut_h = 6.3;
 cut_r = 1.3;
 sock_w = 12.0;      // socket body behind the panel
 sock_h = 5.3;
-sock_depth = 14;    // flange to wire exit
+sock_depth = 14;    // outer face of the wall (flange seat) to the wire exit
 flange_w = 16.7;    // only used for the preview
 flange_h = 10.3;
 socket_wall = 2.0;  // wall the socket snaps into (its rubber wedge expects ~2 mm)
+wedge_clear = 3;    // keep cradle and lid rib this far from the wall, so the
+                    // socket's rubber barbs can spring out behind it
 
 /* [Case] */
 wall = 2.2;         // >= 2 mm keeps infrared light out with most black filaments
@@ -44,6 +46,7 @@ wire_gap = 6;       // room between sensor pads and socket wires
 // (curvature eats ~w^2/(8r) at the board edges).
 forehead_r = 0;
 boss_d = 5;         // screw bosses for the lid
+boss_embed = 0.8;   // how far the bosses merge into the side walls
 screw_pilot = 1.7;  // pilot hole for M2 self-tapping screws
 screw_clear = 2.4;  // clearance hole in the lid
 
@@ -52,6 +55,15 @@ strap_w = 26;       // elastic width
 strap_slot = 2.6;   // slot width for the elastic thickness
 loop_bar = 3.2;     // width of the bar the elastic wraps around
 loop_h = 5;         // height of the loop bar (z)
+
+/* [Holding the sensor down] */
+// Posts under the lid press the board onto the skin-face plate, so the glass
+// can't lift out of the window. They sit on the board edge away from the wire
+// pads (two corners and the middle of both sides); check there are no parts.
+press_posts = true;
+post_size = 2;
+post_inset = 1.5;   // post centre from the board edge
+press_squeeze = 0.2;
 
 /* [Felt on the skin face] */
 // The felt covers the skin face and blocks stray light. The sensor glass stands
@@ -68,30 +80,39 @@ assert(front_t >= 0.6, "skin-face plate too thin: reduce felt_proud or check sen
 pocket_w = sensor_w + 2 * fit;
 pocket_h = sensor_h + 2 * fit;
 outer_w = pocket_w + 2 * wall;
-outer_l = wall + pocket_h + wire_gap + sock_depth + socket_wall;
+outer_l = wall + pocket_h + wire_gap + sock_depth;
 cx = outer_w / 2;                         // centre line in x
 sensor_cy = wall + pocket_h / 2;          // sensor centre in y
 win_cx = cx + win_dx;
 win_cy = sensor_cy + win_dy;
 open_w = win_w + 2 * fit;                 // window opening
 open_h = win_h + 2 * fit;
-sock_y0 = outer_l - socket_wall - sock_depth; // socket body start (rear end)
+sock_y0 = outer_l - sock_depth;           // socket body start (rear end)
+sock_inner_end = outer_l - socket_wall;   // inside face of the socket wall
 sock_zc = (body_h + lid_t) / 2;           // socket centre height
-boss_y = sock_y0 + sock_depth / 2;
-boss_dx = sock_w / 2 + fit + boss_d / 2;  // bosses either side of the socket body
+boss_y = (sock_y0 + sock_inner_end) / 2;
+boss_dx = pocket_w / 2 - boss_d / 2 + boss_embed; // bosses merged into the side walls
 loop_l = strap_w + 2 * 3;                 // loop length along y
+// Loops as close to the sensor as possible, but fully alongside the body so
+// both of their end webs are attached
+loop_y0 = max(0, sensor_cy - loop_l / 2);
+board_back_z = front_t + pcb_t;
+
+assert(loop_y0 + loop_l <= outer_l, "strap loops longer than the body");
+assert(boss_dx - boss_d / 2 >= sock_w / 2 + fit, "screw bosses collide with the socket body");
 
 module rounded_rect(w, h, r) {
   offset(r) square([w - 2 * r, h - 2 * r], center = true);
 }
 
 module strap_loop(side) { // side = -1 left, +1 right
-  x0 = side < 0 ? -(strap_slot + loop_bar) : outer_w;
-  translate([x0, sensor_cy - loop_l / 2, 0])
+  overlap = 0.5; // merge into the side wall instead of just touching it
+  x0 = side < 0 ? -(strap_slot + loop_bar) : outer_w - overlap;
+  translate([x0, loop_y0, 0])
     difference() {
-      cube([strap_slot + loop_bar, loop_l, loop_h]);
+      cube([strap_slot + loop_bar + overlap, loop_l, loop_h]);
       // slot next to the body, the elastic goes through it and around the outer bar
-      translate([side < 0 ? loop_bar : 0, 3, -1]) cube([strap_slot, strap_w, loop_h + 2]);
+      translate([side < 0 ? loop_bar : overlap, 3, -1]) cube([strap_slot, strap_w, loop_h + 2]);
     }
 }
 
@@ -121,9 +142,10 @@ module body() {
     translate([cx, outer_l - socket_wall - 1, sock_zc]) rotate([-90, 0, 0])
       linear_extrude(socket_wall + 2) rounded_rect(cut_w, cut_h, cut_r);
   }
-  // cradle under the socket body
-  cradle_top = sock_zc - sock_h / 2;
-  translate([cx - sock_w / 2, sock_y0, front_t - 0.01]) cube([sock_w, sock_depth, cradle_top - front_t]);
+  // cradle under the socket body, stopping short of the wall for the rubber barbs
+  cradle_top = sock_zc - sock_h / 2 - 0.1;
+  translate([cx - sock_w / 2, sock_y0, front_t - 0.01])
+    cube([sock_w, sock_inner_end - wedge_clear - sock_y0, cradle_top - front_t]);
   // screw bosses
   for (s = [-1, 1])
     translate([cx + s * boss_dx, boss_y, front_t - 0.01])
@@ -133,13 +155,21 @@ module body() {
       }
 }
 
-// Printed flat side down; the rib presses the socket body onto its cradle.
+// Printed flat side down. The rib presses the socket body onto its cradle, the
+// posts press the sensor board onto the skin-face plate.
 module lid() {
   rib_h = body_h - (sock_zc + sock_h / 2) + 0.2; // 0.2 mm squeeze on the rubber socket body
+  post_h = body_h - board_back_z + press_squeeze;
+  post_x = [wall + fit + post_inset, outer_w - wall - fit - post_inset];
+  post_y = [wall + fit + post_inset, sensor_cy];
   difference() {
     union() {
       cube([outer_w, outer_l, lid_t]);
-      translate([cx - sock_w / 2 + 1, sock_y0 + 1, lid_t - 0.01]) cube([sock_w - 2, sock_depth - 2, rib_h]);
+      translate([cx - sock_w / 2 + 1, sock_y0 + 1, lid_t - 0.01])
+        cube([sock_w - 2, sock_inner_end - wedge_clear - sock_y0 - 1, rib_h]);
+      if (press_posts)
+        for (x = post_x, y = post_y)
+          translate([x - post_size / 2, y - post_size / 2, lid_t - 0.01]) cube([post_size, post_size, post_h]);
     }
     for (s = [-1, 1])
       translate([cx + s * boss_dx, boss_y, -1]) cylinder(d = screw_clear, h = lid_t + 2);
@@ -157,7 +187,7 @@ module felt() {
 
 module socket_preview() {
   color("dimgray") translate([cx, outer_l, sock_zc]) rotate([-90, 0, 0]) {
-    translate([0, 0, 0]) linear_extrude(1.5) rounded_rect(flange_w, flange_h, 2);
+    linear_extrude(1.5) rounded_rect(flange_w, flange_h, 2);
     translate([0, 0, -sock_depth]) linear_extrude(sock_depth) rounded_rect(sock_w, sock_h, 1);
   }
 }

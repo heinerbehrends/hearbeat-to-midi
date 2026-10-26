@@ -19,9 +19,14 @@ antenna_overhang = 6.24; // module sticking out past the PCB at the antenna end
 recess_w = 28.8;         // inside the lid lip: 31.5 - 2 x 1.35
 lip_h = 2.0;             // the lip, i.e. the recess depth
 
+screw_dx = 82.6;         // lid screw holes, centre to centre along the length
+notch_r = 3.35;          // radius of the recess corner notches around the screw holes
+                         // (hole 4.0 / 2 + lip wall 1.35): measure on the real lid
+
 /* [Plate] */
-fit = 0.2;               // clearance per side to the lip
-plate_l = 74;            // stays clear of the screw-hole notches in the recess corners
+fit = 0.2;               // clearance per side to the lip and notches
+// Long enough that the corner notches locate the plate lengthwise
+plate_l = screw_dx - 2 * notch_r - 2 * fit;
 plate_t = 1.2;
 groove_w = 3.0;          // grooves for the pin stubs: clip them to ~0.6 mm
 groove_d = 0.8;
@@ -37,7 +42,7 @@ cy = plate_w / 2;
 // of the box between its corner bosses
 usb_x = (plate_l - (board_l + antenna_overhang)) / 2; // USB edge of the board
 stop_x = usb_x + board_l + end_stop_fit;
-stop_h = plate_t + pcb_t; // no higher than the PCB top: the module overhangs above it
+stop_h = plate_t + pcb_t - 0.3; // below the PCB top: the module overhangs above it
 
 assert(board_w <= plate_w, "board wider than the lid recess");
 assert(usb_x >= 0, "plate too short for the board");
