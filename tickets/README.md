@@ -12,6 +12,7 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 | 006 | [Stepped tempo mode and DAW transport](006-stepwise-tempo-changes.md) | implemented | 001, 002 |
 | 009 | [Transport LED (beat, tempo direction, count-in)](009-transport-led.md) | implemented | 003, 006 |
 | 010 | [Runtime settings over serial (and double time)](010-runtime-settings.md) | implemented | 002, 006, 009 |
+| 011 | [Control from the DAW over MIDI CC](011-daw-control.md)        | implemented | 010        |
 
 ## Conventions
 

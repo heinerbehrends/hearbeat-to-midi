@@ -53,6 +53,7 @@ then one `ok …` or `err …` line.
   values back. A saved value overrides the one in `Settings.h` until `reset` + `save`; values never changed follow
   `Settings.h`. Pins, the device name and other hardware settings are compile-time only.
 - `save` writes flash, which can make one clock tick a few ms late: save while stopped if that matters.
+- A few values can also be changed from the DAW by MIDI CC, see [Control from the DAW](#control-from-the-daw).
 
 ## DAWs
 
@@ -60,6 +61,34 @@ then one `ok …` or `err …` line.
 | --- | --- |
 | Ableton Live | works: enable **Sync** for the input, press **EXT** |
 | REAPER | doesn't follow MIDI clock tempo; run [`tools/reaper/heart_rate_tempo.lua`](tools/reaper/heart_rate_tempo.lua), which applies the tempo the device also sends as CC (setup in the script header). Start/stop via SPP sync. |
+
+### Control from the DAW
+
+The DAW can change some settings live by sending control changes on **channel 16** to the device's
+MIDI port:
+
+| CC | Changes | Values |
+| --- | --- | --- |
+| 21 | `step_beats` | 0–31 → 4, 32–63 → 8, 64–95 → 16, 96–127 → 32 |
+| 22 | rate preset | 0–42 slow, 43–85 medium, 86–127 fast; overrides the rate switch until the switch is moved again (the last change wins) |
+| 23 | `feedback_offset_bpm` | 0–127 → 0–10 bpm, in 0.1 bpm steps |
+| 24 | `tempo_multiplier` | 0–63 → 1, 64–127 → 2 (double time) |
+
+- They work like `set`: the same checks, logged as `param: step_beats 16 -> 32 (cc21=100)` (the rate
+  as `rate: medium -> fast (cc22=127)`), and the same timing (a new step length on a common phrase
+  boundary, double time on a bar line, while stopped at once). A step length at or below
+  `count_in_beats` lowers the count-in to fit.
+- **Not saved:** after a restart the saved values apply again; type `save` to keep the current ones.
+- A CC only acts when its value lands in a different zone (or, for CC 23, a different 0.1 bpm), so
+  a knob can send as many CCs as it likes. Other channels, the tempo CC pair (20 / 52, which MIDI-thru
+  can send back), notes and clock are ignored.
+- **Ableton Live:** enable the device's port as a *Track* output (Preferences → Link, Tempo & MIDI),
+  set a MIDI track's *MIDI To* to it, channel 16, and draw CC 21–24 in a clip's envelopes (*MIDI Ctrl*);
+  or set *MIDI From* to a hardware controller sending these CCs and arm the track.
+- **REAPER:** add a track whose output (*Routing → MIDI hardware output*) is the device, and draw CC 21–24
+  on channel 16 as CC lanes, or route a controller to it. Leave the device's own input out of that
+  track (or keep MIDI-thru off) so the tempo CC doesn't loop back (it is ignored anyway).
+- Numbers, channel and zones are in `include/Settings.h` (`CONTROL_CC_*`, `CC_*`).
 
 ## Boards
 
