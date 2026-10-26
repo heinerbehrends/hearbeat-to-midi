@@ -20,7 +20,7 @@ breadboard/development board. Both are built from the same code (PlatformIO envi
   behind a plug-sized opening (13.5 × 7.5 mm, centre ≈ 6.8 mm above the rim: the model echoes the exact
   height). No laptop panel socket needed; the XIAO has the CC resistors, so C-to-C cables work.
 - **Sensor socket** (4-pin USB-C, V/D−/D+/G, no CC) in end wall B, raised above the lid lip.
-- **Switches and LED** on the top face, in the middle: keep the switches ~25 mm from wall A
+- **Switches and both LEDs** on the top face, in the middle: keep the switches ~25 mm from wall A
   (XIAO + holder) and ~17 mm from wall B (socket).
 
 ## XIAO holder
@@ -44,10 +44,12 @@ breadboard/development board. Both are built from the same code (PlatformIO envi
 | D0 / D1 | feedback switch − / + |
 | D8 / D9 | rate switch slow / fast |
 | D10 / D7 | transport switch stop / stepped |
-| D3 (GPIO4) | LED data via 330 Ω (LED powered from 5V via 1N4148) |
-| 5V | LED supply (through the diode) |
+| D3 (GPIO4) | sensor-state LED data via 330 Ω |
+| D2 (GPIO3) | transport LED data via 330 Ω |
+| 5V | supply for both LEDs through one 1N4148 (each LED with its own 100 nF) |
 
-D2 and D6 stay free (strapping pin / boot messages). **Only ever connect the sensor to the sensor
+D6 stays free (it carries the boot messages). D2 is a strapping pin, which is fine for the LED data
+output; the optional 10 kΩ pull-down on each LED's data line keeps them dark during a reset. **Only ever connect the sensor to the sensor
 socket:** a USB-A charger or port on an A-to-C cable would put 5 V onto the 3V3 line.
 
 ## Height (inside 25.4 mm from the rim to the top face)

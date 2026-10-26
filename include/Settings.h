@@ -29,6 +29,8 @@ constexpr int RATE_PIN_FAST = 8;         // D9
 constexpr int TRANSPORT_PIN_STOP = 9;    // D10
 constexpr int TRANSPORT_PIN_STEPPED = 44; // D7
 constexpr int LED_PIN = 4;               // D3, external WS2812D-F8 (the onboard LED is a plain one)
+constexpr int TRANSPORT_LED_PIN = 3;     // D2, second WS2812D-F8 (GPIO3 is a strapping pin, but
+                                         // fine as an output once the board has started)
 #else
 // ESP32-S3-DevKitC-1 clone (YD-ESP32-S3), breadboard setup
 constexpr int SENSOR_SDA = 17;
@@ -41,6 +43,7 @@ constexpr int TRANSPORT_PIN_STOP = 15;
 constexpr int TRANSPORT_PIN_STEPPED = 16;
 // 21 = external WS2812D-F8. 48 = onboard LED (needs the RGB solder jumper bridged).
 constexpr int LED_PIN = 21;
+constexpr int TRANSPORT_LED_PIN = 10;    // second WS2812D-F8
 #endif
 
 // --- Feedback switch: − / 0 / + -------------------------------------------
@@ -134,11 +137,33 @@ constexpr bool REQUIRE_SPO2_VALID = true;
 // (byte 0 = SpO2, 1 = SpO2 valid, 2-5 = heart rate, 7 = heart rate present).
 constexpr bool LOG_RAW_SENSOR_BYTES = false;
 
-// --- Status LED ------------------------------------------------------------------
+// --- Status LED (LED 1): sensor state ---------------------------------------------
 constexpr uint8_t LED_LEVEL = 16;          // brightness 3-255; the WS2812D-F8 is very bright
 // true (testing): amber as soon as one reading is missing or rejected, even while
 // the tempo keeps following. false (stage): green for as long as the lock holds.
 constexpr bool LED_SHOW_EVERY_MISS = true;
+
+// --- Transport LED (LED 2): stopped / beat / tempo direction / count-in -----------
+// Stopped: dim white. Playing: a flash on every beat (brighter on beat 1 of each
+// bar), white while the tempo holds, orange while it rises, blue while it falls.
+// Stepped mode: the last COUNT_IN_BEATS beats before a tempo step flash in the
+// step's colour, getting brighter; the step itself gets one long flash.
+struct Rgb
+{
+  uint8_t r, g, b; // full-scale colour, dimmed to the level it's shown at
+};
+constexpr Rgb COLOR_STEADY = {255, 255, 255};
+constexpr Rgb COLOR_FASTER = {255, 90, 0};   // orange
+constexpr Rgb COLOR_SLOWER = {0, 60, 255};   // blue
+constexpr uint8_t TRANSPORT_LED_LEVEL = 16;  // brightness of a downbeat flash, 3-255
+constexpr uint8_t STOPPED_LEVEL = 3;         // the dim "stopped" glow
+constexpr int BEATS_PER_BAR = 4;             // which beats count as downbeats
+constexpr uint32_t BEAT_FLASH_MS = 80;
+constexpr uint32_t STEP_FLASH_MS = 400;      // the long flash on a tempo step
+constexpr int COUNT_IN_BEATS = 4;
+constexpr float DIRECTION_MIN_BPM = 0.3;     // glide: show rising/falling only when the tempo
+                                             // still has this far to go to its target
+constexpr float STEP_CUE_MIN_BPM = 0.5;      // stepped: no count-in for smaller steps
 
 // ============================================================================
 // Builds the filter configuration from the values above (no need to edit).
@@ -182,6 +207,9 @@ static_assert(START_RETRY_AFTER_INVALID >= 1, "START_RETRY_AFTER_INVALID must be
 static_assert(SENSOR_POLL_MS >= 1000, "polling faster than 1 s only re-reads the same value");
 static_assert(LED_LEVEL >= 3, "LED_LEVEL below 3 makes amber look red");
 static_assert(STEP_BEATS >= 1, "STEP_BEATS must be at least 1");
+static_assert(COUNT_IN_BEATS >= 1 && COUNT_IN_BEATS < STEP_BEATS, "COUNT_IN_BEATS must be 1 .. STEP_BEATS - 1");
+static_assert(BEATS_PER_BAR >= 1, "BEATS_PER_BAR must be at least 1");
+static_assert(TRANSPORT_LED_LEVEL >= 3 && STOPPED_LEVEL >= 1, "LED levels too low to show colours");
 static_assert(VALID_MAX_BPM + FEEDBACK_OFFSET_BPM < 256, "the tempo CC (bpm x 64, 14 bit) only reaches 255.98 bpm");
 static_assert(TEMPO_CC_CHANNEL >= 1 && TEMPO_CC_CHANNEL <= 16, "TEMPO_CC_CHANNEL must be 1-16");
 static_assert(TEMPO_CC <= 31, "TEMPO_CC must be 0-31 so that TEMPO_CC + 32 is its LSB");

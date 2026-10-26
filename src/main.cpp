@@ -51,6 +51,11 @@ static std::atomic<int> transportWanted{MODE_STOP}; // from the switch, applied 
 static std::atomic<int> transportMode{MODE_STOP};   // what the clock task has applied
 static std::atomic<bool> transportStopSeen{false};  // a stop was wanted since the clock task last looked
 static std::atomic<uint32_t> clockSentIntervalUs{0}; // interval the clock actually uses (held in stepped mode)
+// For the transport LED
+static std::atomic<uint32_t> ticksSinceStart{0}; // clock ticks sent since the last Start
+static std::atomic<int> glideDir{0};             // +1 tempo gliding up, -1 down, 0 holding
+static std::atomic<int> nextStepDir{0};          // stepped: direction of the coming step
+static std::atomic<int> lastStepDir{0};          // stepped: direction of the step just made
 
 static uint32_t intervalFor(float bpm)
 {
@@ -249,6 +254,17 @@ static void sendTempoCc(uint32_t intervalUs)
   }
 }
 
+static float bpmOf(uint32_t intervalUs)
+{
+  return 60e6f / ((float)intervalUs * PPQN);
+}
+
+// -1 / 0 / +1, with differences smaller than minimum counting as 0
+static int direction(float delta, float minimum)
+{
+  return delta >= minimum ? 1 : delta <= -minimum ? -1 : 0;
+}
+
 // Advances a fixed phase by the current interval each tick, so tempo changes
 // take effect smoothly between ticks without resetting the beat. In stepped mode
 // the interval is held and only refreshed on every STEP_BEATS-th beat after Start.
@@ -272,6 +288,9 @@ static void clockTask(void *)
     // held tempo meets the glide, so leaving stepped mode never jumps)
     if (gliding)
       held = clockIntervalUs.load();
+    nextStepDir.store(mode == MODE_STEPPED
+                          ? direction(bpmOf(clockIntervalUs.load()) - bpmOf(held), STEP_CUE_MIN_BPM)
+                          : 0);
     uint32_t interval = held;
     clockSentIntervalUs.store(interval);
     next += interval;
@@ -297,11 +316,14 @@ static void clockTask(void *)
         // current tempo for the intervals that follow
         if (tick % ticksPerStep == 0)
         {
+          uint32_t before = held;
           held = clockIntervalUs.load();
+          lastStepDir.store(direction(bpmOf(held) - bpmOf(before), STEP_CUE_MIN_BPM));
           if (mode == MODE_RUN)
             gliding = true;
         }
         tick++;
+        ticksSinceStart.store(tick);
         // After a beat or more of lost ticks the DAW's position is unknown:
         // restart it from the top so it's back in phase
         resync = failRun >= (uint32_t)PPQN;
@@ -315,7 +337,10 @@ static void clockTask(void *)
     }
 
     if (handleTransport(resync))
+    {
       tick = 0;
+      ticksSinceStart.store(0);
+    }
     sendTempoCc(held);
   }
 }
@@ -415,13 +440,18 @@ static void sensorTask(void *)
     }
 
     clockIntervalUs.store(intervalFor(heartTempo.update(now)));
+    // The tempo only moves while locked, toward the target
+    glideDir.store(heartTempo.state() == HeartState::Locked
+                       ? direction(heartTempo.target() - heartTempo.tempo(), DIRECTION_MIN_BPM)
+                       : 0);
     vTaskDelay(pdMS_TO_TICKS(TEMPO_UPDATE_MS));
   }
 }
 
 void setup()
 {
-  rgbLedWrite(LED_PIN, 0, 0, 0); // the LED keeps its last colour across resets
+  rgbLedWrite(LED_PIN, 0, 0, 0); // the LEDs keep their last colour across resets
+  rgbLedWrite(TRANSPORT_LED_PIN, 0, 0, 0);
   Serial.begin(115200); // DevKit: hardware UART (COM port); XIAO: USB CDC next to MIDI
 #if ARDUINO_USB_CDC_ON_BOOT
   Serial.setTxTimeoutMs(0); // never stall the sensor task when no serial monitor is open
@@ -519,10 +549,76 @@ static void updateLed(uint32_t now)
   }
 }
 
+// Transport LED: dim white when stopped; while playing a flash on every beat
+// (brighter on downbeats) in the tempo's direction colour, with a growing
+// count-in before each step in stepped mode. See Settings.h.
+static void updateTransportLed(uint32_t now)
+{
+  static uint32_t lastBeat = UINT32_MAX, beatAtMs = 0, lastColor = 0xFFFFFFFF;
+  auto dirColor = [](int dir) { return dir > 0 ? COLOR_FASTER : dir < 0 ? COLOR_SLOWER : COLOR_STEADY; };
+
+  Rgb c = COLOR_STEADY;
+  int level = 0;
+  int mode = transportMode.load();
+  uint32_t ticks = ticksSinceStart.load();
+  if (mode == MODE_STOP)
+  {
+    level = STOPPED_LEVEL;
+    lastBeat = UINT32_MAX;
+  }
+  else if (ticks > 0) // the first tick after Start is beat 1
+  {
+    uint32_t beat = (ticks - 1) / PPQN;
+    if (beat != lastBeat)
+    {
+      lastBeat = beat;
+      beatAtMs = now;
+    }
+    uint32_t sinceBeat = now - beatAtMs;
+    int beatInPhrase = beat % STEP_BEATS;
+    bool downbeat = beat % BEATS_PER_BAR == 0;
+    int normal = downbeat ? TRANSPORT_LED_LEVEL : std::max(1, TRANSPORT_LED_LEVEL / 2);
+
+    if (mode == MODE_STEPPED)
+    {
+      int countIn = beatInPhrase - (STEP_BEATS - COUNT_IN_BEATS) + 1; // 1 .. COUNT_IN_BEATS
+      int stepDir = lastStepDir.load(), cueDir = nextStepDir.load();
+      if (beatInPhrase == 0 && beat > 0 && stepDir != 0)
+      {
+        c = dirColor(stepDir); // the step just happened: one long flash
+        level = sinceBeat < STEP_FLASH_MS ? TRANSPORT_LED_LEVEL : 0;
+      }
+      else if (countIn >= 1 && cueDir != 0)
+      {
+        c = dirColor(cueDir); // count-in, getting brighter toward the step
+        level = sinceBeat < BEAT_FLASH_MS ? std::max(1, TRANSPORT_LED_LEVEL * countIn / COUNT_IN_BEATS) : 0;
+      }
+      else
+        level = sinceBeat < BEAT_FLASH_MS ? normal : 0;
+    }
+    else
+    {
+      c = dirColor(glideDir.load());
+      level = sinceBeat < BEAT_FLASH_MS ? normal : 0;
+    }
+  }
+
+  // Dim the full-scale colour to the level, keeping a lit channel at least 1
+  auto dim = [&](uint8_t v) { return (uint8_t)(v ? std::max(1, (v * level + 254) / 255) : 0); };
+  uint8_t r = level ? dim(c.r) : 0, g = level ? dim(c.g) : 0, b = level ? dim(c.b) : 0;
+  uint32_t color = (uint32_t)r << 16 | (uint32_t)g << 8 | b;
+  if (color != lastColor)
+  {
+    rgbLedWrite(TRANSPORT_LED_PIN, r, g, b);
+    lastColor = color;
+  }
+}
+
 void loop()
 {
   uint32_t now = millis();
   readSwitches(now);
   updateLed(now);
+  updateTransportLed(now);
   delay(5);
 }

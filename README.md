@@ -19,7 +19,14 @@ USB MIDI clock whose tempo slowly follows the heart rate. It shows up as **"Hear
 | Rate switch | slow / medium / fast (how quickly the tempo moves) |
 | Transport switch | stop / run / run stepped (until wired: the BOOT button cycles these) |
 
-LED: red blinking = no sensor, red = no finger (tempo held), amber = acquiring, green = following.
+Two LEDs:
+
+| LED | Shows |
+| --- | --- |
+| **Sensor** | red blinking = no sensor, red = no finger (tempo held), amber = acquiring, green = following |
+| **Transport** | dim white = stopped. Playing: a flash on every beat (brighter on beat 1 of the bar), white = tempo holding, orange = rising, blue = falling. Stepped mode: the 4 beats before a step count in, growing brighter, in the step's colour; the step itself gets a long flash |
+
+Colours, brightness and timing are in `include/Settings.h`.
 
 ## DAWs
 

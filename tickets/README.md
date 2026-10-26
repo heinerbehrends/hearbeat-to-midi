@@ -10,6 +10,7 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 | 004 | [Absolute clock tempo limits](004-absolute-tempo-limits.md)   | todo        | –          |
 | 005 | [Valid-reading rate in the log](005-valid-reading-metric.md)  | backlog     | –          |
 | 006 | [Stepped tempo mode and DAW transport](006-stepwise-tempo-changes.md) | implemented | 001, 002 |
+| 009 | [Transport LED (beat, tempo direction, count-in)](009-transport-led.md) | implemented | 003, 006 |
 
 ## Conventions
 
