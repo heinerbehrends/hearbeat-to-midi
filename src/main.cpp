@@ -443,7 +443,7 @@ static void sensorTask(void *)
   int loggedMode = MODE_STOP;
   int loggedStepBeats = appliedStepBeats.load(), loggedMultiplier = appliedMultiplier.load();
   bool configChanged = false;
-  // Every change, from a serial command or a DAW CC (`source`, e.g. "cc21=70"),
+  // Every change, from a serial command or a DAW CC (`source`, e.g. "cc23=70"),
   // is logged and published the same way
   auto paramChanged = [&](int id, float oldValue, float newValue, const char *source) {
     char from[24], to[24];

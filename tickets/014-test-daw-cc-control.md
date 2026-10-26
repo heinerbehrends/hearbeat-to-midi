@@ -8,8 +8,7 @@ output "Heart Rate To MIDI".
 
 ## Acceptance criteria
 
-- [ ] [hw] In the DAW, map a knob or a clip envelope to CC 21–24 on channel 16.
-- [ ] [hw] **CC 21** step interval 4 / 8 / 16 / 32: takes effect on a shared phrase boundary.
+- [ ] [hw] In the DAW, map a knob or a clip envelope to CC 22–24 on channel 16.
 - [ ] [hw] **CC 22** rate slow / medium / fast: the glide speed audibly changes; moving the rate toggle
       afterwards takes control back.
 - [ ] [hw] **CC 23** feedback strength 0–10 bpm: with feedback on − or +, the tempo shifts relative to

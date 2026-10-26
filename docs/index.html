@@ -573,16 +573,11 @@ class DemoTransport {
   }
   // Like a DAW knob: control CCs on channel 16 (see Settings.h)
   simulateCc() {
-    const turn = this.ccTurn++ % 3;
+    const turn = this.ccTurn++ % 2;
     const cc = Math.floor(Math.random() * 128);
     try {
       if (turn === 0) {
         this.apply(this.def('feedback_offset_bpm'), Math.fround(Math.round(cc / 127 * 100) / 10), 'cc23=' + cc);
-      } else if (turn === 1) {
-        const v = [4, 8, 16, 32][cc >> 5];
-        const sb = this.def('step_beats'), ci = this.def('count_in_beats');
-        if (this.values.count_in_beats >= v) this.apply(ci, v - 1, 'cc21=' + cc);
-        if (this.apply(sb, v, 'cc21=' + cc)) this.out(`clock: step_beats ${v}, tempo_multiplier ${this.values.tempo_multiplier} in effect`);
       } else {
         const v = cc < 64 ? 1 : 2;
         if (this.apply(this.def('tempo_multiplier'), v, 'cc24=' + cc)) this.out(`clock: step_beats ${this.values.step_beats}, tempo_multiplier ${v} in effect`);

@@ -17,14 +17,13 @@
 
 ### Same path as `set`
 - [x] [unit] Parameter changes go through `Params::set` (same validation), are not saved (a later `save`
-      stores them) and are logged `param: step_beats 16 -> 32 (cc21=100)`; a refused value logs
-      `param: cc21=… refused: <error>`.
-- [x] [unit] A step length at or below `count_in_beats` first lowers `count_in_beats` to
-      `step_beats - 1` (logged), so every zone of CC 21 works with the default count-in of 4.
-- [x] The live-apply rules are those of `set`: `step_beats` on a phrase boundary common to old and new
-      length, `tempo_multiplier` on the next bar line, while stopped at once; rate and feedback at once
+      stores them) and are logged `param: tempo_multiplier 1 -> 2 (cc24=100)`; a refused value logs
+      `param: cc24=… refused: <error>`.
+- [x] The step length is not a CC (set it on the settings page or with `set step_beats`); CC 21 is ignored.
+- [x] The live-apply rules are those of `set`:
+      `tempo_multiplier` on the next bar line, while stopped at once; rate and feedback at once
       via `HeartTempo::setConfig` (glide continues).
-- [ ] [hw] Step length and double-time changes by CC while playing land on the boundaries (as 010).
+- [ ] [hw] Double-time changes by CC while playing land on the bar line (as 010).
 
 ### Rate override
 - [x] [unit] The effective rate preset is the CC 22 override if one came since the rate switch last
@@ -46,7 +45,6 @@
 
 | CC (channel 16) | Changes | Values |
 | --- | --- | --- |
-| 21 | `step_beats` | 0–31 → 4, 32–63 → 8, 64–95 → 16, 96–127 → 32 |
 | 22 | rate preset | 0–42 slow, 43–85 medium, 86–127 fast; overrides the switch until it moves |
 | 23 | `feedback_offset_bpm` | 0–127 → 0–10 bpm, linear, 0.1 bpm steps |
 | 24 | `tempo_multiplier` | 0–63 → 1, 64–127 → 2 |

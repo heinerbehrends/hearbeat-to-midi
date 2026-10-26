@@ -38,8 +38,6 @@ uint8_t midicontrol::ccOf(int control)
 {
   switch (control)
   {
-  case STEP_BEATS:
-    return s::CC_STEP_BEATS;
   case RATE:
     return s::CC_RATE;
   case FEEDBACK_OFFSET:
@@ -48,11 +46,6 @@ uint8_t midicontrol::ccOf(int control)
     return s::CC_TEMPO_MULTIPLIER;
   }
   return 0xFF;
-}
-
-int midicontrol::stepBeatsFor(uint8_t value)
-{
-  return zone(s::CC_STEP_BEATS_VALUES, value);
 }
 
 int midicontrol::rateFor(uint8_t value)
@@ -76,8 +69,6 @@ float midicontrol::valueFor(int control, uint8_t value)
 {
   switch (control)
   {
-  case STEP_BEATS:
-    return stepBeatsFor(value);
   case RATE:
     return rateFor(value);
   case FEEDBACK_OFFSET:
@@ -143,19 +134,10 @@ void MidiControl::apply(Params &params, RateSelect &rate, const Changed &changed
       rate.setOverride((int)value, raw_[c]);
       continue;
     }
-    int id = c == STEP_BEATS ? params::STEP_BEATS : c == FEEDBACK_OFFSET ? params::FEEDBACK_OFFSET_BPM
-                                                                          : params::TEMPO_MULTIPLIER;
+    int id = c == FEEDBACK_OFFSET ? params::FEEDBACK_OFFSET_BPM : params::TEMPO_MULTIPLIER;
     float old = params.get(id);
     if (value == old)
       continue;
-    // A step length at or below the count-in would be refused: shorten the
-    // count-in first (it only cues the LED), so every zone of the knob works
-    if (id == params::STEP_BEATS && params.get(params::COUNT_IN_BEATS) >= value)
-    {
-      float oldCountIn = params.get(params::COUNT_IN_BEATS);
-      if (params.set(params::COUNT_IN_BEATS, value - 1) && changed)
-        changed(params::COUNT_IN_BEATS, oldCountIn, value - 1, source);
-    }
     if (params.set(id, value))
     {
       if (changed)

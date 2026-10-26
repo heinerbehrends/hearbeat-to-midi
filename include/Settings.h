@@ -128,13 +128,10 @@ constexpr uint32_t TEMPO_CC_RESEND_MS = 2000; // also resend unchanged, for late
 // until `save`. A CC only acts when its mapped value changes (a knob sends a
 // stream of CCs), and other channels, our own tempo CC pair (MIDI-thru in the
 // DAW can send it back) and every other message are ignored. The 0-127 range is
-// split into equal zones, one per value: 4 zones = 0-31, 32-63, 64-95, 96-127.
+// split into equal zones, one per value: 3 zones = 0-42, 43-85, 86-127.
+// (The step length is set through the settings page / serial `set`, not by CC.)
 constexpr bool CONTROL_CC_ENABLED = true;
-constexpr uint8_t CONTROL_CC_CHANNEL = 16;    // 1-16
-// step_beats: 0-31 -> 4, 32-63 -> 8, 64-95 -> 16, 96-127 -> 32. A length at or
-// below count_in_beats lowers count_in_beats to step_beats - 1 first (logged).
-constexpr uint8_t CC_STEP_BEATS = 21;
-constexpr int CC_STEP_BEATS_VALUES[] = {4, 8, 16, 32};
+constexpr uint8_t CONTROL_CC_CHANNEL = 16;    // 1-16, the channel the device listens on for these
 // Rate preset: 0-42 slow, 43-85 medium, 86-127 fast. Overrides the rate switch
 // until the switch is moved again (the last change wins).
 constexpr uint8_t CC_RATE = 22;
@@ -269,22 +266,14 @@ static_assert(TEMPO_CC <= 31, "TEMPO_CC must be 0-31 so that TEMPO_CC + 32 is it
 static_assert(CONTROL_CC_CHANNEL >= 1 && CONTROL_CC_CHANNEL <= 16, "CONTROL_CC_CHANNEL must be 1-16");
 constexpr bool isControlCc(uint8_t cc)
 {
-  return cc == CC_STEP_BEATS || cc == CC_RATE || cc == CC_FEEDBACK_OFFSET || cc == CC_TEMPO_MULTIPLIER;
+  return cc == CC_RATE || cc == CC_FEEDBACK_OFFSET || cc == CC_TEMPO_MULTIPLIER;
 }
-static_assert(CC_STEP_BEATS <= 119 && CC_RATE <= 119 && CC_FEEDBACK_OFFSET <= 119 && CC_TEMPO_MULTIPLIER <= 119,
+static_assert(CC_RATE <= 119 && CC_FEEDBACK_OFFSET <= 119 && CC_TEMPO_MULTIPLIER <= 119,
               "control CCs must be 0-119 (120-127 are channel mode messages)");
-static_assert(CC_STEP_BEATS != CC_RATE && CC_STEP_BEATS != CC_FEEDBACK_OFFSET && CC_STEP_BEATS != CC_TEMPO_MULTIPLIER &&
-                  CC_RATE != CC_FEEDBACK_OFFSET && CC_RATE != CC_TEMPO_MULTIPLIER &&
-                  CC_FEEDBACK_OFFSET != CC_TEMPO_MULTIPLIER,
+static_assert(CC_RATE != CC_FEEDBACK_OFFSET && CC_RATE != CC_TEMPO_MULTIPLIER && CC_FEEDBACK_OFFSET != CC_TEMPO_MULTIPLIER,
               "control CCs must differ");
 static_assert(!isControlCc(TEMPO_CC) && !isControlCc(TEMPO_CC + 32),
               "control CCs must differ from the tempo CC pair, which the DAW may send back");
-constexpr bool allPowersOfTwoUpTo64(const int *v, int n)
-{
-  return n == 0 || (v[0] >= 1 && v[0] <= 64 && (v[0] & (v[0] - 1)) == 0 && allPowersOfTwoUpTo64(v + 1, n - 1));
-}
-static_assert(allPowersOfTwoUpTo64(CC_STEP_BEATS_VALUES, sizeof(CC_STEP_BEATS_VALUES) / sizeof(int)),
-              "CC_STEP_BEATS_VALUES must be powers of two 1-64");
 static_assert(CC_FEEDBACK_OFFSET_MAX_BPM > 0 && CC_FEEDBACK_OFFSET_MAX_BPM <= 30,
               "CC_FEEDBACK_OFFSET_MAX_BPM must be within feedback_offset_bpm's range (0-30)");
 constexpr bool allOneOrTwo(const int *v, int n)

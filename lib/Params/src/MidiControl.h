@@ -18,7 +18,6 @@ namespace midicontrol
 
 enum Control : uint8_t
 {
-  STEP_BEATS,
   RATE,
   FEEDBACK_OFFSET,
   TEMPO_MULTIPLIER,
@@ -33,7 +32,6 @@ int controlFor(const uint8_t packet[4]);
 uint8_t ccOf(int control);
 
 // The mappings of a CC value 0-127
-int stepBeatsFor(uint8_t value);       // 4 / 8 / 16 / 32
 int rateFor(uint8_t value);            // -1 slow, 0 medium, +1 fast (rate switch positions)
 float feedbackOffsetFor(uint8_t value); // 0 .. CC_FEEDBACK_OFFSET_MAX_BPM in 0.1 bpm steps
 int tempoMultiplierFor(uint8_t value); // 1 / 2
@@ -66,7 +64,7 @@ private:
 class MidiControl
 {
 public:
-  // A parameter changed through a CC; `source` names it for the log ("cc21=70").
+  // A parameter changed through a CC; `source` names it for the log ("cc23=70").
   using Changed = std::function<void(int id, float oldValue, float newValue, const char *source)>;
   // Params refused a value (a rule between parameters); error() as for `set`.
   using Rejected = std::function<void(const char *error, const char *source)>;
