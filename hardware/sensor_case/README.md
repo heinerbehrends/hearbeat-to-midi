@@ -4,6 +4,10 @@ Holds the DFRobot SEN0344 against the forehead, with black felt on the skin face
 out (the most important factor for good readings), and has a panel USB-C socket so the cable can be unplugged (and pops out under a
 hard pull, about 8 N, before the headband gets dragged).
 
+Placement: the earlobe or the forehead with stray light blocked reads best; a finger works but is
+finicky. After a disturbance (a shift, a bump) readings stay off for a while, because the
+sensor's own averaging lingers.
+
 Model: [`sensor_case.scad`](sensor_case.scad) (OpenSCAD, free: openscad.org). All dimensions are
 parameters at the top of the file; in OpenSCAD open *Window > Customizer* to change them.
 

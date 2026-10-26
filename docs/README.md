@@ -35,8 +35,8 @@ rules and log lines, so the page can be explored and tested without hardware.
 
 ## Opening it
 
-- **GitHub Pages**: in the repository on GitHub, Settings → Pages → Build and deployment: "Deploy from a
-  branch", branch `main`, folder `/docs`. The page is then at `https://<user>.github.io/<repo>/`.
+- **Online**: <https://heinerbehrends.github.io/hearbeat-to-midi/> (GitHub Pages, deployed from branch
+  `main`, folder `/docs`; note the repository's spelling "hearbeat").
 - **Locally**: in this folder run `python -m http.server` and open <http://localhost:8000>
   (add `?demo` for the simulated device).
 
@@ -49,5 +49,5 @@ rules and log lines, so the page can be explored and tested without hardware.
 
 After opening the port the page releases DTR and RTS: on the DevKit they drive the auto-reset circuit
 and would hold the board in reset. Opening the port can still restart the DevKit once; the page waits
-and retries `get` until the device answers. On the XIAO some systems only send serial data while DTR
-is set: if nothing arrives within 2 s the page offers a **Set DTR** checkbox.
+and retries `get` until the device answers. On the XIAO (USB CDC) DTR may need to be set before
+serial data arrives: if nothing arrives within 2 s the page offers a **Set DTR** checkbox.

@@ -1,21 +1,10 @@
 -- Heart Rate To MIDI: make REAPER follow the device's tempo.
 --
 -- REAPER doesn't take its tempo from incoming MIDI clock, so the device also
--- sends its tempo as a 14-bit CC pair: value = bpm x 64, MSB on CC 20 and LSB on
--- CC 52, channel 16 (see TEMPO_CC in include/Settings.h). This script reads those
--- messages and sets the tempo of the project's first tempo marker.
---
--- Setup (once):
---   * Preferences > MIDI Devices: enable "Heart Rate To MIDI" as input
---     ("control only" is enough).
---   * Disable audio time stretching for items that should not follow the tempo.
---   * Keep a single tempo marker: later markers override the one this script sets.
---   * For start/stop: right-click Play > external timecode synchronization,
---     SPP from that input; the device's transport switch (or its BOOT button as a
---     stand-in) sends SPP + Start/Stop.
--- Run: Actions > Load ReaScript, then run it (also works as a toolbar toggle).
--- It keeps running in the background; run it again to stop it.
--- Needs REAPER 6.41 or newer (MIDI_GetRecentInputEvent).
+-- sends its tempo as a 14-bit CC pair (bpm x 64, CC 20 MSB / CC 52 LSB, channel
+-- 16; TEMPO_CC in include/Settings.h). This script sets the project's first tempo
+-- marker from it. Setup, running, messages and limitations: README.md next to
+-- this script. Needs REAPER 6.41 or newer (MIDI_GetRecentInputEvent).
 
 local CHANNEL = 16              -- 1-16, TEMPO_CC_CHANNEL in Settings.h
 local CC_MSB = 20               -- TEMPO_CC in Settings.h

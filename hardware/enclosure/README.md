@@ -22,6 +22,8 @@ breadboard/development board. Both are built from the same code (PlatformIO envi
 - **Sensor socket** (4-pin USB-C, V/D−/D+/G, no CC) in end wall B, raised above the lid lip.
 - **Switches and both LEDs** on the top face, in the middle: keep the switches ~25 mm from wall A
   (XIAO + holder) and ~17 mm from wall B (socket).
+- Dropping the rate toggle (rate via the settings page / CC 22 only) is under consideration
+  ([ticket 018](../../tickets/018-drop-rate-toggle.md)); it would free space on the top face.
 
 ## XIAO holder
 
@@ -60,9 +62,7 @@ socket:** a USB-A charger or port on an A-to-C cable would put 5 V onto the 3V3 
 
 ## Development with the XIAO
 
-One USB port carries MIDI and the serial log (USB CDC). `pio run -e xiao-s3-plus -t upload`
-restarts the board into download mode by itself (if that fails: hold B, tap R, release B).
-`pio device monitor -e xiao-s3-plus` shows the log; `pio test -e xiao-s3-plus` runs the tests.
+Upload, log and tests: see the main README, "Development".
 
 ## DevKit tray (breadboard board, optional)
 

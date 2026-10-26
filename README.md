@@ -17,7 +17,7 @@ USB MIDI clock whose tempo slowly follows the heart rate. It shows up as **"Hear
 | Control | Positions |
 | --- | --- |
 | Feedback switch | − / follow / + |
-| Rate switch | slow / medium / fast (how quickly the tempo moves) |
+| Rate switch | slow / medium / fast (how quickly the tempo moves); dropping it for CC 22 / the settings page is under consideration ([ticket 018](tickets/018-drop-rate-toggle.md)) |
 | Transport switch | stop / run / run stepped (until wired: the BOOT button cycles these) |
 
 Two LEDs:
@@ -32,7 +32,9 @@ Colours, brightness and timing are in `include/Settings.h`.
 ## Settings at runtime
 
 Most tuning values (rate presets, steering, step length, filter thresholds, LED levels, double time) can
-be changed while the device runs, without recompiling: type commands into the serial monitor
+be changed while the device runs, without recompiling: on the **settings page**
+(<https://heinerbehrends.github.io/hearbeat-to-midi/>, Chrome or Edge over Web Serial; see
+[`docs/README.md`](docs/README.md)), or by typing commands into the serial monitor
 (`pio device monitor`; DevKit: UART port, XIAO: its USB port). Each command answers with info lines and
 then one `ok …` or `err …` line.
 
@@ -60,7 +62,7 @@ then one `ok …` or `err …` line.
 | DAW | Status |
 | --- | --- |
 | Ableton Live | works: enable **Sync** for the input, press **EXT** |
-| REAPER | doesn't follow MIDI clock tempo; run [`tools/reaper/heart_rate_tempo.lua`](tools/reaper/heart_rate_tempo.lua), which applies the tempo the device also sends as CC (setup in the script header). Start/stop via SPP sync. |
+| REAPER | doesn't follow MIDI clock tempo; run [`tools/reaper/heart_rate_tempo.lua`](tools/reaper/heart_rate_tempo.lua), which applies the tempo the device also sends as CC. Start/stop via SPP sync. Setup and findings: [`tools/reaper/README.md`](tools/reaper/README.md) |
 
 ### Control from the DAW
 
@@ -75,7 +77,8 @@ MIDI port:
 
 - They work like `set`: the same checks, logged as `param: tempo_multiplier 1 -> 2 (cc24=100)` (the
   rate as `rate: medium -> fast (cc22=127)`), and the same timing (double time on a bar line, while
-  stopped at once). The step length isn't a CC: set it on the settings page or with `set step_beats`.
+  stopped at once). The step length isn't a CC (CC 21 was removed): set it on the settings page or with
+  `set step_beats`.
 - **Not saved:** after a restart the saved values apply again; type `save` to keep the current ones.
 - A CC only acts when its value lands in a different zone (or, for CC 23, a different 0.1 bpm), so
   a knob can send as many CCs as it likes. Other channels, the tempo CC pair (20 / 52, which MIDI-thru
@@ -111,20 +114,57 @@ The same code builds for two boards; the PlatformIO **environment** picks the bo
 - **DevKit:** two USB-C ports.
   - **native port:** USB MIDI only (to the DAW)
   - **UART port (CH343):** upload, serial log, tests; no BOOT/RST buttons needed
-- **XIAO:** its one USB-C port carries MIDI and the serial log (USB CDC); uploads restart it into
-  download mode by themselves (if that fails: hold B, tap R, release B).
+- **XIAO:** its one USB-C port carries MIDI and the serial log (USB CDC).
+  `pio run -e xiao-s3-plus -t upload` restarts it into download mode by itself (1200 bps touch; if
+  that fails: hold B, tap R, release B). `pio device monitor -e xiao-s3-plus` shows the log;
+  `pio test -e xiao-s3-plus -f test_heart_tempo -f test_params` runs the tests on it.
 - **Per machine:** copy `platformio_local.ini.example` to `platformio_local.ini` and set the DevKit's
   UART port (`pio device list`, VID:PID 1A86:55D3). The XIAO's port is found automatically.
-- `pio run -t upload` flashes the MIDI firmware. `pio test -f test_heart_tempo -f test_params` runs the
-  filter and settings tests on the board (add `-e xiao-s3-plus` for the XIAO). `pio run -e diag -t upload` flashes a probe that
+- `pio run -t upload` flashes the MIDI firmware. `pio run -e diag -t upload` flashes a probe that
   finds the sensor on any pins (DevKit).
-- `pio device monitor` shows a serial-plotter log (`>HR:…,Tempo:…`) plus readable state lines.
+- **Tests** run on the board (Unity, `pio test`; `-f <suite>` picks one):
+
+  | Suite | Covers |
+  | --- | --- |
+  | `test_heart_tempo` | the filter (lock, gate, caution rule, recorded sessions), feedback steering, glide limit, rate changes, switch debounce |
+  | `test_params` | settings registry, serial commands, save/load (NVS), step-length and double-time boundaries, DAW CC mapping |
+  | `test_smoke` | the board itself: heap and PSRAM size, PSRAM read/write, flash partition size |
+
+- `pio device monitor` shows readable lines (`state: …`, `param: …`, `transport: …`) and, once per
+  sensor poll (4 s), a serial-plotter line such as
+  `>Raw:72,HR:71.4,Target:66.4,Tempo:68.12,Clock:68.12,State:3,Ok:1,Fb:-1,Rate:0,Mode:0,Drops:0`:
+
+  | Field | Meaning |
+  | --- | --- |
+  | `Raw` | the sensor's heart rate; left out when it gave none (or its SpO2-valid flag was 0) |
+  | `HR` | filtered heart rate estimate |
+  | `Target` | where the tempo glides to: `HR` with feedback applied |
+  | `Tempo` | glide tempo, in heart rate terms |
+  | `Clock` | tempo the clock sends: `Tempo` (held between steps in stepped mode) × `tempo_multiplier`, capped at 240 |
+  | `State` | 0 NoSensor, 1 NoFinger, 2 Acquiring, 3 Locked |
+  | `Ok` | 1 = the last reading was accepted by the filter |
+  | `Fb` | feedback switch: −1 minus, 0 follow, 1 plus |
+  | `Rate` | effective rate preset (switch, or CC 22 since the switch last moved): −1 slow, 0 medium, 1 fast |
+  | `Mode` | transport: −1 stop, 0 run, 1 stepped |
+  | `Drops` | clock ticks the USB stack refused since power-on |
 - **All tunable values** (pins, rates, filter, LED, transport) are in
   [`include/Settings.h`](include/Settings.h), with explanations; the ones marked `[runtime]` are defaults
   for the settings above (registry: [`lib/Params`](lib/Params/src/Params.cpp)).
 
+## Troubleshooting (development)
+
+| Problem | Fix |
+| --- | --- |
+| Upload or test on Windows crashes with an esptool `UnicodeEncodeError` | set `PYTHONIOENCODING=utf-8` before running `pio` (PowerShell: `$env:PYTHONIOENCODING='utf-8'`) |
+| Test build fails with Unity "Implicit dependency … unity.h not found" | delete `.pio/build/<env>` and build again (Unity is pinned in `lib_deps` to make this rarer) |
+| DevKit held in reset / no log when your own script or tool opens the CH343 port | release DTR and RTS (both false): they drive the auto-reset circuit. `monitor_dtr = 0` / `monitor_rts = 0` in `platformio.ini` do this for `pio device monitor` |
+| "Port busy" / "access denied" | only one program can use a serial port at a time: serial monitor, upload, test or the settings page |
+| Why `#include "../../../include/Settings.h"` in `lib/Params` | the framework ships its own `settings.h`, and Windows file names are case-insensitive, so `<Settings.h>` can resolve to the wrong file in library builds |
+
 ## More
 
+- [Settings page](https://heinerbehrends.github.io/hearbeat-to-midi/) – runtime settings from the
+  browser (source and setup: [`docs/`](docs/))
 - [`tickets/`](tickets/) – features with acceptance criteria, and what's still open
 - [`hardware/sensor_case/`](hardware/sensor_case/) – 3D-printable forehead pod for the sensor
 - [`hardware/enclosure/`](hardware/enclosure/) – Hammond 1590A box: XIAO holder, layout, wiring,
