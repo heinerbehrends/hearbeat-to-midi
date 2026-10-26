@@ -4,7 +4,10 @@
 // Core 1: clock task sends 24 PPQN MIDI clock at the current tempo, always.
 //         loop() reads the switches and drives the status LED.
 //
-// Settings to tweak live in include/Settings.h.
+// Settings to tweak live in include/Settings.h; the ones marked [runtime] can
+// also be changed over the serial port (read by the sensor task, see README).
+// Their live values are published as atomics: the clock task and loop() read
+// them lock-free, the sensor task is the only writer.
 #include <Arduino.h>
 #include <USB.h>
 #include <USBMIDI.h>
@@ -13,7 +16,11 @@
 #include <cmath>
 #include <esp_log.h>
 #include <esp32-hal-tinyusb.h>
+#include <ClockGrid.h>
 #include <HeartTempo.h>
+#include <ParamConsole.h>
+#include <ParamNvs.h>
+#include <Params.h>
 #include <Switch3.h>
 #include <Settings.h>
 
@@ -57,6 +64,31 @@ static std::atomic<int> glideDir{0};             // +1 tempo gliding up, -1 down
 static std::atomic<int> nextStepDir{0};          // stepped: direction of the coming step
 static std::atomic<int> lastStepDir{0};          // stepped: direction of the step just made
 
+// Runtime settings. `runtime` and `nvs` belong to the sensor task (after setup);
+// every change is copied to liveParam, which the other tasks read.
+static Params runtime;
+static ParamNvs nvs;
+static std::atomic<float> liveParam[params::COUNT];
+// What the clock task has applied (changes wait for a phrase or bar boundary)
+static std::atomic<int> appliedStepBeats{STEP_BEATS};
+static std::atomic<int> appliedMultiplier{TEMPO_MULTIPLIER};
+
+static float live(int id)
+{
+  return liveParam[id].load(std::memory_order_relaxed);
+}
+
+static int liveInt(int id)
+{
+  return (int)live(id);
+}
+
+static void publishParams()
+{
+  for (int i = 0; i < params::COUNT; i++)
+    liveParam[i].store(runtime.get(i));
+}
+
 static uint32_t intervalFor(float bpm)
 {
   // Last-resort guard: a bad value must never stop or flood the clock
@@ -92,9 +124,9 @@ static const char *modeName(int mode)
   return mode == MODE_STOP ? "stop" : mode == MODE_RUN ? "run" : "stepped";
 }
 
-static const RatePreset &ratePreset(int pos)
+static const char *rateName(int pos)
 {
-  return pos < 0 ? RATE_SLOW : pos > 0 ? RATE_FAST : RATE_MEDIUM;
+  return pos < 0 ? RATE_SLOW.name : pos > 0 ? RATE_FAST.name : RATE_MEDIUM.name;
 }
 
 static bool sensorPresent()
@@ -267,12 +299,16 @@ static int direction(float delta, float minimum)
 
 // Advances a fixed phase by the current interval each tick, so tempo changes
 // take effect smoothly between ticks without resetting the beat. In stepped mode
-// the interval is held and only refreshed on every STEP_BEATS-th beat after Start.
+// the interval is held and only refreshed on every step_beats-th beat after Start.
+// The tempo multiplier scales the interval actually sent (held stays in heart
+// rate terms). Runtime changes of step_beats and tempo_multiplier wait for a
+// boundary that keeps the DAW in phase; while stopped they apply at once.
 static void clockTask(void *)
 {
-  const uint32_t ticksPerStep = STEP_BEATS * PPQN;
+  const uint32_t minIntervalUs = intervalFor(MAX_CLOCK_BPM);
+  int stepBeats = appliedStepBeats.load(), multiplier = appliedMultiplier.load();
   int64_t next = esp_timer_get_time();
-  uint32_t held = clockIntervalUs.load();
+  uint32_t held = clockIntervalUs.load(); // heart rate tempo, before the multiplier
   bool gliding = true;
   uint32_t tick = 0;     // index of the next tick since Start (0 = beat 1); counts
                          // only ticks that went out, so it matches the DAW's count
@@ -280,6 +316,14 @@ static void clockTask(void *)
   for (;;)
   {
     int mode = transportMode.load();
+    int wantedStep = liveInt(params::STEP_BEATS), wantedMultiplier = liveInt(params::TEMPO_MULTIPLIER);
+    if (mode == MODE_STOP)
+    {
+      stepBeats = wantedStep;
+      multiplier = wantedMultiplier;
+      appliedStepBeats.store(stepBeats);
+      appliedMultiplier.store(multiplier);
+    }
     if (mode == MODE_STEPPED)
       gliding = false;
     else if (mode == MODE_STOP)
@@ -291,7 +335,7 @@ static void clockTask(void *)
     nextStepDir.store(mode == MODE_STEPPED
                           ? direction(bpmOf(clockIntervalUs.load()) - bpmOf(held), STEP_CUE_MIN_BPM)
                           : 0);
-    uint32_t interval = held;
+    uint32_t interval = scaleInterval(held, multiplier, minIntervalUs);
     clockSentIntervalUs.store(interval);
     next += interval;
     int64_t wait;
@@ -312,9 +356,21 @@ static void clockTask(void *)
     {
       if (sendClockTick())
       {
+        // A new step length starts on a phrase boundary of both lengths, so the
+        // phrase grid continues; double time starts on a bar line
+        if (wantedStep != stepBeats && stepChangeDue(tick, stepBeats, wantedStep, PPQN))
+        {
+          stepBeats = wantedStep;
+          appliedStepBeats.store(stepBeats);
+        }
+        if (wantedMultiplier != multiplier && barBoundary(tick, liveInt(params::BEATS_PER_BAR), PPQN))
+        {
+          multiplier = wantedMultiplier;
+          appliedMultiplier.store(multiplier);
+        }
         // Step boundary: the tick just sent starts a new phrase, take the glide's
         // current tempo for the intervals that follow
-        if (tick % ticksPerStep == 0)
+        if (tick % ((uint32_t)stepBeats * PPQN) == 0)
         {
           uint32_t before = held;
           held = clockIntervalUs.load();
@@ -341,16 +397,33 @@ static void clockTask(void *)
       tick = 0;
       ticksSinceStart.store(0);
     }
-    sendTempoCc(held);
+    sendTempoCc(interval); // the tempo actually sent, multiplier included
   }
+}
+
+static void printLine(const char *line)
+{
+  Serial.printf("%s\r\n", line);
 }
 
 static void sensorTask(void *)
 {
-  HeartTempo heartTempo(heartTempoConfig());
+  HeartTempo heartTempo(runtime.heartTempoConfig(0));
   HeartState lastState = heartTempo.state();
   int appliedFeedback = 99, appliedRate = 99; // force a log line at boot
   int loggedMode = MODE_STOP;
+  int loggedStepBeats = appliedStepBeats.load(), loggedMultiplier = appliedMultiplier.load();
+  bool configChanged = false;
+  // Serial commands (set, get, save, ...). `save` writes flash, which can delay
+  // a clock tick by a few ms.
+  ParamConsole console(runtime, nvs, printLine, [&](int id, float oldValue, float newValue) {
+    char from[24], to[24];
+    runtime.format(id, oldValue, from, sizeof(from));
+    runtime.format(id, newValue, to, sizeof(to));
+    Serial.printf("param: %s %s -> %s\r\n", params::def(id).name, from, to);
+    liveParam[id].store(newValue);
+    configChanged = true;
+  });
   bool collecting = false;
   int failedPolls = 0, invalidPolls = 0;
   uint32_t lastPoll = millis() - SENSOR_POLL_MS;
@@ -358,6 +431,9 @@ static void sensorTask(void *)
   for (;;)
   {
     uint32_t now = millis();
+
+    while (Serial.available() > 0)
+      console.feed((char)Serial.read());
 
     // Plain text lines are shown as-is by serial plotters
     int fb = feedbackSwitch.load();
@@ -373,14 +449,25 @@ static void sensorTask(void *)
     int rate = rateSwitch.load();
     if (rate != appliedRate)
     {
-      const RatePreset &p = ratePreset(rate);
       if (appliedRate == 99)
-        Serial.printf("rate: %s", p.name);
+        Serial.printf("rate: %s", rateName(rate));
       else
-        Serial.printf("rate: %s -> %s", ratePreset(appliedRate).name, p.name);
-      Serial.printf(" (%.3f %%/beat, tau %.0f s)\r\n", p.maxChangePerBeat * 100, p.tauSec);
-      heartTempo.setRate(p.maxChangePerBeat, p.tauSec);
+        Serial.printf("rate: %s -> %s", rateName(appliedRate), rateName(rate));
+      Serial.printf(" (%.3f %%/beat, tau %.0f s)\r\n", runtime.maxChangePerBeat(rate) * 100, runtime.tauSec(rate));
       appliedRate = rate;
+      configChanged = true;
+    }
+    // Rate switch or runtime settings: the glide continues from where it is
+    if (configChanged)
+    {
+      heartTempo.setConfig(runtime.heartTempoConfig(appliedRate));
+      configChanged = false;
+    }
+    if (appliedStepBeats.load() != loggedStepBeats || appliedMultiplier.load() != loggedMultiplier)
+    {
+      loggedStepBeats = appliedStepBeats.load();
+      loggedMultiplier = appliedMultiplier.load();
+      Serial.printf("clock: step_beats %d, tempo_multiplier %d in effect\r\n", loggedStepBeats, loggedMultiplier);
     }
     int mode = transportMode.load();
     if (mode != loggedMode)
@@ -452,6 +539,7 @@ void setup()
 {
   rgbLedWrite(LED_PIN, 0, 0, 0); // the LEDs keep their last colour across resets
   rgbLedWrite(TRANSPORT_LED_PIN, 0, 0, 0);
+  Serial.setRxBufferSize(512); // room for a few setting commands between reads
   Serial.begin(115200); // DevKit: hardware UART (COM port); XIAO: USB CDC next to MIDI
 #if ARDUINO_USB_CDC_ON_BOOT
   Serial.setTxTimeoutMs(0); // never stall the sensor task when no serial monitor is open
@@ -469,8 +557,18 @@ void setup()
                   TRANSPORT_PIN_STEPPED, BOOT_BUTTON_PIN})
     pinMode(pin, INPUT_PULLUP);
 
-  clockIntervalUs.store(intervalFor(START_BPM));
-  clockSentIntervalUs.store(intervalFor(START_BPM));
+  // Runtime settings: saved values over the Settings.h defaults
+  if (!nvs.begin("hr2midi"))
+    Serial.printf("params: NVS unavailable, using defaults\r\n");
+  int loaded = runtime.load(nvs);
+  Serial.printf("params: %d saved value(s) loaded, type help for commands\r\n", loaded);
+  publishParams();
+  appliedStepBeats.store(runtime.getInt(params::STEP_BEATS));
+  appliedMultiplier.store(runtime.getInt(params::TEMPO_MULTIPLIER));
+
+  uint32_t startInterval = intervalFor(runtime.get(params::START_BPM));
+  clockIntervalUs.store(startInterval);
+  clockSentIntervalUs.store(scaleInterval(startInterval, appliedMultiplier.load(), intervalFor(MAX_CLOCK_BPM)));
   xTaskCreatePinnedToCore(clockTask, "clock", 4096, nullptr, configMAX_PRIORITIES - 2, nullptr, 1);
   xTaskCreatePinnedToCore(sensorTask, "sensor", 8192, nullptr, 2, nullptr, 0);
 }
@@ -515,27 +613,28 @@ static void readSwitches(uint32_t now)
 static void updateLed(uint32_t now)
 {
   static uint32_t lastColor = 0xFFFFFFFF;
-  const uint8_t amberGreen = std::max(1, LED_LEVEL / 3);
+  const int level = liveInt(params::LED_LEVEL);
+  const uint8_t amberGreen = std::max(1, level / 3);
 
   uint8_t r = 0, g = 0, b = 0;
   switch (heartState.load())
   {
   case HeartState::NoSensor:
-    r = (now / 250) % 2 ? LED_LEVEL : 0;
+    r = (now / 250) % 2 ? level : 0;
     break;
   case HeartState::NoFinger:
-    r = LED_LEVEL;
+    r = level;
     break;
   case HeartState::Acquiring:
-    r = LED_LEVEL;
+    r = level;
     g = amberGreen;
     break;
   case HeartState::Locked:
-    if (readingOk.load() || !LED_SHOW_EVERY_MISS)
-      g = LED_LEVEL;
+    if (readingOk.load() || !live(params::LED_SHOW_EVERY_MISS))
+      g = level;
     else
     {
-      r = LED_LEVEL;
+      r = level;
       g = amberGreen;
     }
     break;
@@ -561,9 +660,14 @@ static void updateTransportLed(uint32_t now)
   int level = 0;
   int mode = transportMode.load();
   uint32_t ticks = ticksSinceStart.load();
+  // Live settings; the step length is the one the clock has applied
+  const int stepBeats = appliedStepBeats.load();
+  const int countInBeats = std::min(liveInt(params::COUNT_IN_BEATS), stepBeats - 1);
+  const int beatsPerBar = liveInt(params::BEATS_PER_BAR);
+  const int flashLevel = liveInt(params::TRANSPORT_LED_LEVEL);
   if (mode == MODE_STOP)
   {
-    level = STOPPED_LEVEL;
+    level = liveInt(params::STOPPED_LEVEL);
     lastBeat = UINT32_MAX;
   }
   else if (ticks > 0) // the first tick after Start is beat 1
@@ -575,23 +679,23 @@ static void updateTransportLed(uint32_t now)
       beatAtMs = now;
     }
     uint32_t sinceBeat = now - beatAtMs;
-    int beatInPhrase = beat % STEP_BEATS;
-    bool downbeat = beat % BEATS_PER_BAR == 0;
-    int normal = downbeat ? TRANSPORT_LED_LEVEL : std::max(1, TRANSPORT_LED_LEVEL / 2);
+    int beatInPhrase = beat % stepBeats;
+    bool downbeat = beat % beatsPerBar == 0;
+    int normal = downbeat ? flashLevel : std::max(1, flashLevel / 2);
 
     if (mode == MODE_STEPPED)
     {
-      int countIn = beatInPhrase - (STEP_BEATS - COUNT_IN_BEATS) + 1; // 1 .. COUNT_IN_BEATS
+      int countIn = beatInPhrase - (stepBeats - countInBeats) + 1; // 1 .. countInBeats
       int stepDir = lastStepDir.load(), cueDir = nextStepDir.load();
       if (beatInPhrase == 0 && beat > 0 && stepDir != 0)
       {
         c = dirColor(stepDir); // the step just happened: one long flash
-        level = sinceBeat < STEP_FLASH_MS ? TRANSPORT_LED_LEVEL : 0;
+        level = sinceBeat < STEP_FLASH_MS ? flashLevel : 0;
       }
       else if (countIn >= 1 && cueDir != 0)
       {
         c = dirColor(cueDir); // count-in, getting brighter toward the step
-        level = sinceBeat < BEAT_FLASH_MS ? std::max(1, TRANSPORT_LED_LEVEL * countIn / COUNT_IN_BEATS) : 0;
+        level = sinceBeat < BEAT_FLASH_MS ? std::max(1, flashLevel * countIn / countInBeats) : 0;
       }
       else
         level = sinceBeat < BEAT_FLASH_MS ? normal : 0;

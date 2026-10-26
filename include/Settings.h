@@ -1,5 +1,12 @@
 // ============================================================================
 // All the settings to tweak, in one place. Change a value, then build & upload.
+//
+// Values marked [runtime: <name>] are only defaults: they can also be changed
+// while the device runs, over the serial port (`set <name> <value>`, `save`; see
+// README "Settings at runtime"), without recompiling. A saved value overrides the
+// one here until `reset <name>` or `reset`; values never changed at runtime
+// always follow this file. The ranges and rules for runtime changes are in
+// lib/Params/src/Params.cpp. Everything unmarked is compile-time only.
 // ============================================================================
 #pragma once
 #include <cstdint>
@@ -49,11 +56,11 @@ constexpr int TRANSPORT_LED_PIN = 10;    // second WS2812D-F8
 // --- Feedback switch: − / 0 / + -------------------------------------------
 
 // How far − and + put the tempo target below/above the heart rate.
-constexpr float FEEDBACK_OFFSET_BPM = 5;
+constexpr float FEEDBACK_OFFSET_BPM = 5;  // [runtime: feedback_offset_bpm]
 // Steering never takes the target past these. They never push against the
 // switch: in − with a heart rate below STEER_LOW_BPM the target just follows.
-constexpr float STEER_LOW_BPM = 55;
-constexpr float STEER_HIGH_BPM = 130;
+constexpr float STEER_LOW_BPM = 55;       // [runtime: steer_low_bpm]
+constexpr float STEER_HIGH_BPM = 130;     // [runtime: steer_high_bpm]
 
 // --- Rate switch: slow / medium / fast -------------------------------------
 // Second 8016, wired the same way. Centre = medium.
@@ -70,6 +77,7 @@ struct RatePreset
   float tauSec;
 };
 
+// [runtime: rate_<slow|medium|fast>_max_change, rate_<slow|medium|fast>_tau_sec]
 constexpr RatePreset RATE_SLOW = {"slow", 0.00075f, 40};
 constexpr RatePreset RATE_MEDIUM = {"medium", 0.0015f, 25};
 constexpr RatePreset RATE_FAST = {"fast", 0.004f, 12};
@@ -90,7 +98,19 @@ constexpr bool TRANSPORT_SWITCH_INSTALLED = false;
 
 // Stepped mode: the clock tempo holds for this many beats (counted from Start) and
 // then jumps to wherever the glide has got to. 16 beats = 4 bars of 4/4.
+// [runtime: step_beats, a power of two 1-64; a change applies on the next phrase
+// boundary of both the old and the new length, so the phrase grid stays in phase]
 constexpr int STEP_BEATS = 16;
+
+// --- Double time -----------------------------------------------------------------
+// Clock tempo = heart rate tempo x TEMPO_MULTIPLIER (1 or 2). Applied in the clock
+// only: the filter, feedback and glide limit keep working in heart rate terms;
+// beats, phrases, the transport LED and the tempo CC count clock beats. A change
+// while playing lands on the next bar line (BEATS_PER_BAR); while stopped at once.
+constexpr int TEMPO_MULTIPLIER = 1;      // [runtime: tempo_multiplier]
+// Cap on the tempo the clock sends (x2 of a 180 bpm heart rate would be 360). Must
+// stay below 256: the tempo CC (bpm x 64, 14 bit) only reaches 255.98 bpm.
+constexpr float MAX_CLOCK_BPM = 240;
 
 // --- Tempo as MIDI CC (for REAPER) -----------------------------------------
 // REAPER doesn't follow MIDI clock tempo. The device also sends its tempo as a
@@ -103,21 +123,26 @@ constexpr uint32_t TEMPO_CC_RESEND_MS = 2000; // also resend unchanged, for late
 
 // --- Heart rate filter -------------------------------------------------------
 constexpr float START_BPM = 70;          // clock tempo at power-on, before the first lock
+                                         // [runtime: start_bpm, applies after a restart]
 constexpr float VALID_MIN_BPM = 40;      // readings outside this range are ignored
 constexpr float VALID_MAX_BPM = 180;
 constexpr int INVALID_TO_NO_FINGER = 5;  // readings without heart rate in a row (x 4 s) before "no finger"
+                                         // [runtime: invalid_to_no_finger]
 constexpr int MISSING_TO_NO_SENSOR = 3;  // polls without an answer in a row before "no sensor";
                                          // fewer are treated as a gap, so a bus glitch keeps the lock
 constexpr int AGREE_COUNT = 3;           // readings of the last AGREE_COUNT + 1 that must agree to lock
-constexpr float AGREE_TOL_BPM = 4;       // ...within this distance of each other's median
+constexpr float AGREE_TOL_BPM = 4;       // ...within this distance of each other's median [runtime: agree_tol_bpm]
 constexpr float GATE_FLOOR_BPM = 8;      // while locked, readings this close to recent ones always pass
+                                         // [runtime: gate_floor_bpm, gate_max_bpm]
 constexpr float GATE_MAX_BPM = 12;       // ...and readings further away than this never pass directly
                                          // (your resting scatter measured ~2.5 bpm SD)
 constexpr int LOCK_TIMEOUT_POLLS = 8;    // a lock without any accepted reading for this many polls
                                          // (x 4 s) drops back to acquiring; the tempo holds
+                                         // [runtime: lock_timeout_polls]
 // The sensor's typical junk is a high reading out of nowhere: readings above
 // CAUTION_ABOVE_BPM only count when within CAUTION_STEP_BPM of the previous kept
 // reading (a smooth series), or once AGREE_COUNT of them in a row agree.
+// [runtime: caution_above_bpm, caution_step_bpm]
 constexpr float CAUTION_ABOVE_BPM = 100;
 constexpr float CAUTION_STEP_BPM = 8;
 
@@ -139,9 +164,10 @@ constexpr bool LOG_RAW_SENSOR_BYTES = false;
 
 // --- Status LED (LED 1): sensor state ---------------------------------------------
 constexpr uint8_t LED_LEVEL = 16;          // brightness 3-255; the WS2812D-F8 is very bright
+                                           // [runtime: led_level]
 // true (testing): amber as soon as one reading is missing or rejected, even while
 // the tempo keeps following. false (stage): green for as long as the lock holds.
-constexpr bool LED_SHOW_EVERY_MISS = true;
+constexpr bool LED_SHOW_EVERY_MISS = true; // [runtime: led_show_every_miss]
 
 // --- Transport LED (LED 2): stopped / beat / tempo direction / count-in -----------
 // Stopped: dim white. Playing: a flash on every beat (brighter on beat 1 of each
@@ -155,12 +181,12 @@ struct Rgb
 constexpr Rgb COLOR_STEADY = {255, 255, 255};
 constexpr Rgb COLOR_FASTER = {255, 90, 0};   // orange
 constexpr Rgb COLOR_SLOWER = {0, 60, 255};   // blue
-constexpr uint8_t TRANSPORT_LED_LEVEL = 16;  // brightness of a downbeat flash, 3-255
-constexpr uint8_t STOPPED_LEVEL = 3;         // the dim "stopped" glow
-constexpr int BEATS_PER_BAR = 4;             // which beats count as downbeats
+constexpr uint8_t TRANSPORT_LED_LEVEL = 16;  // brightness of a downbeat flash, 3-255 [runtime: transport_led_level]
+constexpr uint8_t STOPPED_LEVEL = 3;         // the dim "stopped" glow [runtime: stopped_level]
+constexpr int BEATS_PER_BAR = 4;             // which beats count as downbeats [runtime: beats_per_bar]
 constexpr uint32_t BEAT_FLASH_MS = 80;
 constexpr uint32_t STEP_FLASH_MS = 400;      // the long flash on a tempo step
-constexpr int COUNT_IN_BEATS = 4;
+constexpr int COUNT_IN_BEATS = 4;            // 0 = no count-in [runtime: count_in_beats]
 constexpr float DIRECTION_MIN_BPM = 0.3;     // glide: show rising/falling only when the tempo
                                              // still has this far to go to its target
 constexpr float STEP_CUE_MIN_BPM = 0.5;      // stepped: no count-in for smaller steps
@@ -206,11 +232,14 @@ static_assert(LOCK_TIMEOUT_POLLS > INVALID_TO_NO_FINGER, "LOCK_TIMEOUT_POLLS mus
 static_assert(START_RETRY_AFTER_INVALID >= 1, "START_RETRY_AFTER_INVALID must be at least 1");
 static_assert(SENSOR_POLL_MS >= 1000, "polling faster than 1 s only re-reads the same value");
 static_assert(LED_LEVEL >= 3, "LED_LEVEL below 3 makes amber look red");
-static_assert(STEP_BEATS >= 1, "STEP_BEATS must be at least 1");
-static_assert(COUNT_IN_BEATS >= 1 && COUNT_IN_BEATS < STEP_BEATS, "COUNT_IN_BEATS must be 1 .. STEP_BEATS - 1");
+static_assert(STEP_BEATS >= 1 && STEP_BEATS <= 64 && (STEP_BEATS & (STEP_BEATS - 1)) == 0,
+              "STEP_BEATS must be a power of two 1-64 (so phrase grids of different lengths stay in phase)");
+static_assert(COUNT_IN_BEATS >= 0 && COUNT_IN_BEATS < STEP_BEATS, "COUNT_IN_BEATS must be 0 .. STEP_BEATS - 1");
+static_assert(TEMPO_MULTIPLIER == 1 || TEMPO_MULTIPLIER == 2, "TEMPO_MULTIPLIER must be 1 or 2");
 static_assert(BEATS_PER_BAR >= 1, "BEATS_PER_BAR must be at least 1");
 static_assert(TRANSPORT_LED_LEVEL >= 3 && STOPPED_LEVEL >= 1, "LED levels too low to show colours");
-static_assert(VALID_MAX_BPM + FEEDBACK_OFFSET_BPM < 256, "the tempo CC (bpm x 64, 14 bit) only reaches 255.98 bpm");
+static_assert(MAX_CLOCK_BPM >= VALID_MAX_BPM && MAX_CLOCK_BPM < 256,
+              "MAX_CLOCK_BPM must be VALID_MAX_BPM .. 255: the tempo CC (bpm x 64, 14 bit) only reaches 255.98 bpm");
 static_assert(TEMPO_CC_CHANNEL >= 1 && TEMPO_CC_CHANNEL <= 16, "TEMPO_CC_CHANNEL must be 1-16");
 static_assert(TEMPO_CC <= 31, "TEMPO_CC must be 0-31 so that TEMPO_CC + 32 is its LSB");
 
