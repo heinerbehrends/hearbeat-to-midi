@@ -11,6 +11,7 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 | 005 | [Valid-reading rate in the log](005-valid-reading-metric.md)  | backlog     | –          |
 | 006 | [Stepped tempo mode and DAW transport](006-stepwise-tempo-changes.md) | implemented | 001, 002 |
 | 009 | [Transport LED (beat, tempo direction, count-in)](009-transport-led.md) | implemented | 003, 006 |
+| 010 | [Runtime settings over serial (and double time)](010-runtime-settings.md) | implemented | 002, 006, 009 |
 
 ## Conventions
 
@@ -21,12 +22,14 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
     hardware (switches and LED aren't wired yet).
   - `done` = implemented and every criterion verified.
 - **Acceptance criteria come first** and are checkboxes. Each is tagged with how it is verified:
-  - **[unit]** – Unity test in `test/test_heart_tempo` (runs on the device, `pio test`). Anything that
+  - **[unit]** – Unity test in `test/test_heart_tempo` or `test/test_params` (runs on the device, `pio test`). Anything that
     is pure logic (filter, steering, clamps, debounce decoding) belongs in `lib/` so it can be tested here.
   - **[log]** – visible in the serial-plotter log (`>Name:value,...` lines plus plain-text state lines).
   - **[hw]** – checked on the hardware: LED, switches, a DAW receiving the clock.
 - **Tuning values live in one place:** `include/Settings.h` (pins, presets, filter, LED). Tickets name
-  defaults; changing a number later should be a one-line edit.
+  defaults; changing a number later should be a one-line edit. Values marked `[runtime]` there are
+  defaults that can also be changed over serial (010); a new tunable should join `lib/Params` when it is
+  safe to change while running.
 - **Invariants every ticket must keep:**
   - The MIDI clock never stops (clock task on core 1, starts at `START_BPM` = 70, holds through gaps).
   - The tempo only ever moves through the glide limit (`maxChangePerBeat`), so no control, preset or
@@ -52,9 +55,8 @@ Found while testing with the real sensor, or in code reviews:
 
 ## Won't do / maybe later
 
-**Tempo multiplier (×2 / ×½ clock).** Dropped for now. DAWs already handle double or half time through
-note values (play 1/8s instead of 1/4s), so a multiplier adds little musically. If it is ever needed:
-dividing a clock is easy downstream (any MIDI utility or DAW can do it), but multiplying is only clean at
-the source, since a downstream multiplier has to guess the next tick's timing. So a ×2 option, if it
-comes back, belongs in this firmware (scale the clock interval in the clock task, not the HeartTempo
-tempo, and apply the limits from 004 to the resulting clock rate).
+**Half time (×½ clock).** Not planned: dividing a clock is easy downstream (any MIDI utility or DAW can
+do it). Double time is implemented as the runtime setting `tempo_multiplier` (010): multiplying is only
+clean at the source, since a downstream multiplier has to guess the next tick's timing, so it scales the
+clock interval in the clock task (not the HeartTempo tempo), capped at `MAX_CLOCK_BPM`. When 004 lands,
+its limits apply to the resulting clock rate.
