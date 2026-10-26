@@ -5,8 +5,10 @@
 
 void HeartTempo::Buf::push(float x, int cap)
 {
-  cap = std::min(cap, kMaxBuf);
-  if (n == cap)
+  cap = std::max(1, std::min(cap, kMaxBuf));
+  // >= rather than ==: after setConfig shrinks agreeCount, a buffer can hold
+  // more values than its new capacity; drop the oldest ones
+  while (n >= cap)
   {
     std::copy(v + 1, v + n, v);
     n--;
@@ -232,6 +234,11 @@ void HeartTempo::setRate(float maxChangePerBeat, float tauSec)
 {
   cfg_.maxChangePerBeat = maxChangePerBeat;
   cfg_.tauSec = tauSec;
+}
+
+void HeartTempo::setConfig(const HeartTempoConfig &cfg)
+{
+  cfg_ = cfg;
 }
 
 float HeartTempo::target() const

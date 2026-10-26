@@ -66,6 +66,12 @@ public:
   void setFeedback(int direction) { feedback_ = direction < 0 ? -1 : direction > 0 ? 1 : 0; }
   // Change glide speed and smoothing live; the tempo continues from where it is.
   void setRate(float maxChangePerBeat, float tauSec);
+  // Replace all tunables live (runtime settings). The glide continues from the
+  // current tempo and heart rate estimate, and readings already collected are
+  // kept; the new values apply from the next reading or update. startBpm only
+  // matters before the first update, so changing it later has no effect.
+  void setConfig(const HeartTempoConfig &cfg);
+  const HeartTempoConfig &config() const { return cfg_; }
 
   float tempo() const { return tempo_; }
   float heartRate() const { return estimate_; }

@@ -305,6 +305,51 @@ void test_rate_change_is_continuous_and_applies(void)
   TEST_ASSERT_TRUE(fastTempo > medium.tempo() + 2);
 }
 
+// Runtime settings: a new configuration keeps the glide continuous and applies
+void test_set_config_is_continuous_and_applies(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 70, 60);
+  float tempo = ht.tempo(), hr = ht.heartRate();
+  HeartTempoConfig c = ht.config();
+  c.gateMaxBpm = 30;
+  c.gateFloorBpm = 25;
+  c.feedbackOffsetBpm = 10;
+  ht.setConfig(c);
+  TEST_ASSERT_EQUAL_FLOAT(tempo, ht.tempo());
+  TEST_ASSERT_EQUAL_FLOAT(hr, ht.heartRate());
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+
+  // The wider gate now passes a jump the default gate would reject
+  poll(ht, 90);
+  TEST_ASSERT_TRUE(ht.lastReadingAccepted());
+
+  // A larger feedback offset moves the target at once, but the tempo only glides
+  ht.setFeedback(1);
+  float before = ht.tempo();
+  TEST_ASSERT_FLOAT_WITHIN(0.01, ht.heartRate() + 10, ht.target());
+  now += 1000;
+  ht.update(now);
+  TEST_ASSERT_TRUE(ht.tempo() - before <= before * c.maxChangePerBeat * (before / 60) + 0.001f);
+}
+
+// Lowering agreeCount below the readings already collected must not overflow a buffer
+void test_set_config_shrinking_agree_count_is_safe(void)
+{
+  HeartTempo ht;
+  HeartTempoConfig c;
+  c.agreeCount = 8;
+  ht.setConfig(c);
+  for (int hr : {60, 80, 100, 70, 90, 65, 85, 75}) // disagreeing: all stay candidates
+    poll(ht, hr);
+  TEST_ASSERT_EQUAL(HeartState::Acquiring, ht.state());
+  c.agreeCount = 2;
+  ht.setConfig(c);
+  poll(ht, 72);
+  poll(ht, 72);
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+}
+
 void test_switch_first_read_is_immediate(void)
 {
   Switch3 sw(30);
@@ -489,6 +534,8 @@ static void runTests()
   RUN_TEST(test_feedback_glide_stays_below_perception_threshold);
   RUN_TEST(test_feedback_does_nothing_until_locked);
   RUN_TEST(test_rate_change_is_continuous_and_applies);
+  RUN_TEST(test_set_config_is_continuous_and_applies);
+  RUN_TEST(test_set_config_shrinking_agree_count_is_safe);
   RUN_TEST(test_switch_first_read_is_immediate);
   RUN_TEST(test_switch_ignores_bounce);
   RUN_TEST(test_switch_flip_across_centre_reports_only_the_end);
