@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <algorithm>
 #include <cmath>
 #include <HeartTempo.h>
 #include <Switch3.h>
@@ -180,7 +181,9 @@ void test_steep_climb_is_tracked(void)
   for (int hr = 76; hr <= 112; hr += 6)
     poll(ht, hr);
   // Without ramp acceptance the estimate would still sit near 71
-  TEST_ASSERT_TRUE(ht.heartRate() > 85);
+  TEST_ASSERT_TRUE(ht.heartRate() > 78);
+  pollMany(ht, 112, 3); // and it settles on the new level
+  TEST_ASSERT_TRUE(ht.heartRate() > 90);
   TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
 }
 
@@ -369,6 +372,89 @@ void test_sudden_real_rise_above_100_gets_through(void)
   TEST_ASSERT_TRUE(ht.heartRate() > 80);
 }
 
+// Review finding: an outlier must not pass because older high readings agree
+void test_caution_passes_only_agreeing_readings(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 68, 60);
+  for (int hr : {110, 111, 116, 140, 135, 138})
+    poll(ht, hr);
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 68, ht.heartRate());
+}
+
+// Review finding: a junk "ladder" must not open the gate wide after a ramp
+void test_junk_ladder_stays_contained(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 68, 60);
+  float peak = 0;
+  for (int hr : {84, 92, 99, 106, 113, 70, 69, 71, 70, 68})
+  {
+    poll(ht, hr);
+    peak = std::max(peak, ht.heartRate());
+  }
+  TEST_ASSERT_TRUE(peak < 78);
+  TEST_ASSERT_TRUE(ht.heartRate() < 74);
+}
+
+// Review finding: isolated junk separated by gaps must not add up to a lock,
+// and a lock that accepts nothing must not stay "locked"
+void test_junk_across_gaps_does_not_take_over(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 68, 60);
+  for (int hr : {140, 135, 138, 136, 139, 137})
+  {
+    poll(ht, hr);
+    pollMany(ht, INVALID, 4);
+  }
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 68, ht.heartRate());
+  TEST_ASSERT_TRUE(ht.state() != HeartState::Locked);
+}
+
+void test_caution_memory_is_forgotten_after_finger_off(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 98, 60);
+  pollMany(ht, INVALID, 5);
+  TEST_ASSERT_EQUAL(HeartState::NoFinger, ht.state());
+  poll(ht, 104); // would have been "smooth" from the old 98
+  poll(ht, 106);
+  TEST_ASSERT_EQUAL(HeartState::NoFinger, ht.state());
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 98, ht.heartRate());
+}
+
+void test_spike_below_100_is_gated(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 68, 60);
+  poll(ht, 90);
+  TEST_ASSERT_FLOAT_WITHIN(0.01, 68, ht.heartRate());
+}
+
+// Recorded: sensor disturbed, junk that still came with a valid SpO2 flag
+void test_recorded_disturbance_is_rejected(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 68, 60);
+  for (int hr : {84, 119, 126, 109, 94})
+    poll(ht, hr);
+  pollMany(ht, 68, 5);
+  TEST_ASSERT_FLOAT_WITHIN(0.5, 68, ht.heartRate());
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+}
+
+// Recorded: deliberate heavy breathing, a real rise that should be followed
+void test_recorded_heavy_breathing_is_followed(void)
+{
+  HeartTempo ht;
+  pollMany(ht, 67, 30);
+  for (int hr : {70, 79, 79, 79, 82, 76, 77})
+    poll(ht, hr);
+  TEST_ASSERT_TRUE(ht.heartRate() > 72);
+  TEST_ASSERT_EQUAL(HeartState::Locked, ht.state());
+}
+
 // Real readings captured from the sensor, finger on, 4 s polling
 void test_recorded_session_locks_and_ignores_spike(void)
 {
@@ -409,6 +495,13 @@ static void runTests()
   RUN_TEST(test_switch_both_closed_reads_centre);
   RUN_TEST(test_high_junk_is_discarded_without_losing_the_finger);
   RUN_TEST(test_sudden_real_rise_above_100_gets_through);
+  RUN_TEST(test_caution_passes_only_agreeing_readings);
+  RUN_TEST(test_junk_ladder_stays_contained);
+  RUN_TEST(test_junk_across_gaps_does_not_take_over);
+  RUN_TEST(test_caution_memory_is_forgotten_after_finger_off);
+  RUN_TEST(test_spike_below_100_is_gated);
+  RUN_TEST(test_recorded_disturbance_is_rejected);
+  RUN_TEST(test_recorded_heavy_breathing_is_followed);
   RUN_TEST(test_recorded_session_locks_and_ignores_spike);
   UNITY_END();
 }

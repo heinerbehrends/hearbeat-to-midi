@@ -24,6 +24,8 @@ struct HeartTempoConfig
   int historySize = 5;        // accepted readings the outlier gate takes its median over
   float gateK = 3;            // reject readings further than gateK robust sigmas from the median...
   float gateFloorBpm = 8;     // ...but never use a gate narrower than this
+  float gateMaxBpm = 12;      // ...or wider than this
+  int lockTimeoutPolls = 8;   // polls without an accepted reading before a lock drops to acquiring
   int agreeCount = 3;         // readings out of the last agreeCount + 1 that must agree to
                               // lock, or to accept a sustained change the gate rejected
   float agreeTolBpm = 4;      // "agree" = within this distance of their median
@@ -90,7 +92,11 @@ private:
   };
 
   void smooth(float hr, uint32_t nowMs);
+  void handleReading(int hr, uint32_t nowMs);
+  void handleMissing();
+  void afterPoll();
   void countInvalid();
+  void forgetCautionState();
   // Applies the cautionAboveBpm rule; false = discard this reading.
   bool passesCaution(float hr);
   // Push to candidates_ and, if enough of them agree, make them the new history.
@@ -107,6 +113,7 @@ private:
   float lastKept_ = 0; // last reading that passed the caution rule
   int invalidRun_ = 0;
   int missingRun_ = 0;
+  int sinceAccepted_ = 0; // polls since the last accepted reading
   bool lastAccepted_ = false;
   int feedback_ = 0;
   float estimate_;

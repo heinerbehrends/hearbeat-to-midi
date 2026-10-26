@@ -106,8 +106,10 @@ static bool sensorStartCollect()
   return Wire.endTransmission() == 0;
 }
 
-// Returns false if the transfer failed; *hr is -1 when the sensor has no heart rate.
-static bool sensorReadHeartRate(int *hr)
+// Returns false if the transfer failed. *hr is -1 when there is no usable heart
+// rate; *measuring is false when the sensor reports no heart rate at all (as
+// opposed to one discarded for bad quality).
+static bool sensorReadHeartRate(int *hr, bool *measuring)
 {
   Wire.beginTransmission(SENSOR_ADDR);
   Wire.write(REG_RESULT);
@@ -123,6 +125,7 @@ static bool sensorReadHeartRate(int *hr)
   // proven to be junk (a drifting series after the sensor is disturbed)
   bool quality = !REQUIRE_SPO2_VALID || b[1] != 0;
   *hr = v == 0 || v > 1000 || !quality ? -1 : (int)v;
+  *measuring = v != 0;
   if (LOG_RAW_SENSOR_BYTES)
     Serial.printf("raw: %02X %02X %02X %02X %02X %02X %02X %02X\r\n", b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
   return true;
@@ -295,7 +298,8 @@ static void sensorTask(void *)
     {
       lastPoll = now;
       int hr = -1;
-      if (!sensorPresent() || (!collecting && !sensorStartCollect()) || !sensorReadHeartRate(&hr))
+      bool measuring = false;
+      if (!sensorPresent() || (!collecting && !sensorStartCollect()) || !sensorReadHeartRate(&hr, &measuring))
       {
         hr = -1;
         heartTempo.onSensorMissing();
@@ -312,8 +316,10 @@ static void sensorTask(void *)
         collecting = true;
         failedPolls = 0;
         heartTempo.onReading(hr, now);
-        // A sensor that reset without us noticing stops measuring: nudge it again
-        invalidPolls = hr > 0 ? 0 : invalidPolls + 1;
+        // A sensor that reset without us noticing stops measuring: nudge it again.
+        // Only for "no heart rate at all": restarting during a quality dip would
+        // reset its averaging and stretch the disturbance.
+        invalidPolls = measuring ? 0 : invalidPolls + 1;
         if (invalidPolls > 0 && invalidPolls % START_RETRY_AFTER_INVALID == 0)
           sensorStartCollect();
       }

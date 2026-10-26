@@ -82,9 +82,13 @@ constexpr float VALID_MAX_BPM = 180;
 constexpr int INVALID_TO_NO_FINGER = 5;  // readings without heart rate in a row (x 4 s) before "no finger"
 constexpr int MISSING_TO_NO_SENSOR = 3;  // polls without an answer in a row before "no sensor";
                                          // fewer are treated as a gap, so a bus glitch keeps the lock
-constexpr int AGREE_COUNT = 3;           // readings of the last 4 that must agree to lock
+constexpr int AGREE_COUNT = 3;           // readings of the last AGREE_COUNT + 1 that must agree to lock
 constexpr float AGREE_TOL_BPM = 4;       // ...within this distance of each other's median
 constexpr float GATE_FLOOR_BPM = 8;      // while locked, readings this close to recent ones always pass
+constexpr float GATE_MAX_BPM = 12;       // ...and readings further away than this never pass directly
+                                         // (your resting scatter measured ~2.5 bpm SD)
+constexpr int LOCK_TIMEOUT_POLLS = 8;    // a lock without any accepted reading for this many polls
+                                         // (x 4 s) drops back to acquiring; the tempo holds
 // The sensor's typical junk is a high reading out of nowhere: readings above
 // CAUTION_ABOVE_BPM only count when within CAUTION_STEP_BPM of the previous kept
 // reading (a smooth series), or once AGREE_COUNT of them in a row agree.
@@ -102,7 +106,8 @@ constexpr uint32_t SENSOR_POLL_MS = 4000;
 constexpr int START_RETRY_AFTER_INVALID = 4;
 // Only trust the heart rate while the sensor also reports a valid SpO2 (result
 // byte 1). When the sensor is disturbed it drops SpO2 but keeps reporting a
-// drifting, too-high heart rate; this treats those readings as missing.
+// drifting, too-high heart rate; this treats those readings like "no heart rate"
+// (they count toward "no finger", but don't trigger START_RETRY_AFTER_INVALID).
 constexpr bool REQUIRE_SPO2_VALID = true;
 // Debug: also log the sensor's full 8-byte result as hex on every poll
 // (byte 0 = SpO2, 1 = SpO2 valid, 2-5 = heart rate, 7 = heart rate present).
@@ -129,6 +134,8 @@ inline HeartTempoConfig heartTempoConfig()
   c.agreeCount = AGREE_COUNT;
   c.agreeTolBpm = AGREE_TOL_BPM;
   c.gateFloorBpm = GATE_FLOOR_BPM;
+  c.gateMaxBpm = GATE_MAX_BPM;
+  c.lockTimeoutPolls = LOCK_TIMEOUT_POLLS;
   c.cautionAboveBpm = CAUTION_ABOVE_BPM;
   c.cautionStepBpm = CAUTION_STEP_BPM;
   c.maxChangePerBeat = RATE_MEDIUM.maxChangePerBeat;
@@ -149,6 +156,9 @@ static_assert(RATE_SLOW.maxChangePerBeat > 0 && RATE_MEDIUM.maxChangePerBeat > 0
 static_assert(RATE_SLOW.tauSec > 0 && RATE_MEDIUM.tauSec > 0 && RATE_FAST.tauSec > 0, "tauSec must be positive");
 static_assert(AGREE_COUNT >= 2 && AGREE_COUNT <= 8, "AGREE_COUNT must be 2-8");
 static_assert(INVALID_TO_NO_FINGER >= 1 && MISSING_TO_NO_SENSOR >= 1, "counts must be at least 1");
+static_assert(GATE_MAX_BPM >= GATE_FLOOR_BPM, "GATE_MAX_BPM must be at least GATE_FLOOR_BPM");
+static_assert(LOCK_TIMEOUT_POLLS > INVALID_TO_NO_FINGER, "LOCK_TIMEOUT_POLLS must exceed INVALID_TO_NO_FINGER, "
+                                                         "or plain gaps would drop the lock first");
 static_assert(START_RETRY_AFTER_INVALID >= 1, "START_RETRY_AFTER_INVALID must be at least 1");
 static_assert(SENSOR_POLL_MS >= 1000, "polling faster than 1 s only re-reads the same value");
 static_assert(LED_LEVEL >= 3, "LED_LEVEL below 3 makes amber look red");

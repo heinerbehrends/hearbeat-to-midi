@@ -42,6 +42,30 @@ HeartTempo::HeartTempo(const HeartTempoConfig &cfg)
 
 void HeartTempo::onSensorMissing()
 {
+  handleMissing();
+  afterPoll();
+}
+
+void HeartTempo::onReading(int hr, uint32_t nowMs)
+{
+  handleReading(hr, nowMs);
+  afterPoll();
+}
+
+// A lock that hasn't accepted anything for lockTimeoutPolls (e.g. the sensor
+// only produces junk) is no lock: back to acquiring. The tempo holds either way.
+void HeartTempo::afterPoll()
+{
+  sinceAccepted_ = lastAccepted_ ? 0 : sinceAccepted_ + 1;
+  if (state_ == HeartState::Locked && sinceAccepted_ >= cfg_.lockTimeoutPolls)
+  {
+    state_ = HeartState::Acquiring;
+    candidates_.clear();
+  }
+}
+
+void HeartTempo::handleMissing()
+{
   lastAccepted_ = false;
   // A failed poll or two (a bus glitch) is a gap like an invalid reading; only a
   // run of them means the sensor is gone
@@ -53,18 +77,28 @@ void HeartTempo::onSensorMissing()
   state_ = HeartState::NoSensor;
   candidates_.clear();
   invalidRun_ = 0;
+  forgetCautionState();
 }
 
 void HeartTempo::countInvalid()
 {
+  highRun_.clear(); // a gap breaks a run of high readings
   if (++invalidRun_ >= cfg_.invalidToNoFinger)
   {
     state_ = HeartState::NoFinger;
     candidates_.clear();
+    forgetCautionState();
   }
 }
 
-void HeartTempo::onReading(int hr, uint32_t nowMs)
+// After the finger or sensor was gone, earlier readings say nothing about the next ones
+void HeartTempo::forgetCautionState()
+{
+  highRun_.clear();
+  haveKept_ = false;
+}
+
+void HeartTempo::handleReading(int hr, uint32_t nowMs)
 {
   lastAccepted_ = false;
   missingRun_ = 0;
@@ -92,7 +126,9 @@ void HeartTempo::onReading(int hr, uint32_t nowMs)
   Buf dev;
   for (int i = 0; i < history_.n; i++)
     dev.push(std::fabs(history_.v[i] - med), kMaxBuf);
-  float gate = std::max(cfg_.gateFloorBpm, cfg_.gateK * 1.4826f * dev.median());
+  // Capped, so a widely spread history (e.g. after a ramp) can't open the gate wide
+  float gate = std::min(std::max(cfg_.gateFloorBpm, cfg_.gateK * 1.4826f * dev.median()),
+                        std::max(cfg_.gateMaxBpm, cfg_.gateFloorBpm));
 
   if (std::fabs(hr - med) <= gate)
   {
@@ -115,7 +151,9 @@ bool HeartTempo::passesCaution(float hr)
   {
     highRun_.push(hr, cfg_.agreeCount + 1);
     float mean;
-    if (highRun_.n < cfg_.agreeCount || highRun_.agreeing(cfg_.agreeTolBpm, &mean) < cfg_.agreeCount)
+    // Enough of them agree, and this reading is one of those that agree
+    if (highRun_.n < cfg_.agreeCount || highRun_.agreeing(cfg_.agreeTolBpm, &mean) < cfg_.agreeCount ||
+        std::fabs(hr - highRun_.median()) > cfg_.agreeTolBpm)
       return false;
   }
   highRun_.clear();
@@ -161,12 +199,16 @@ bool HeartTempo::acceptRamp(float med, uint32_t nowMs)
       return false;
   }
 
-  float latest = run[k - 1];
+  // Move toward the middle of the run, not its end: a ramp is accepted on little
+  // evidence, so take the cautious value
+  Buf ramp;
+  for (int i = 0; i < k; i++)
+    ramp.push(run[i], kMaxBuf);
   history_.clear();
   for (int i = 0; i < k; i++)
     history_.push(run[i], cfg_.historySize);
   candidates_.clear();
-  smooth(latest, nowMs);
+  smooth(ramp.median(), nowMs);
   lastAccepted_ = true;
   return true;
 }
