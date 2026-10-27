@@ -23,6 +23,7 @@ Work items for the heartbeat-to-MIDI-clock device (ESP32-S3, PlatformIO, Arduino
 | 019 | [Wire the transport switch](019-wire-transport-switch.md) | todo | 006 |
 | 020 | [Build the 1590A enclosure, verify the XIAO](020-build-enclosure-xiao.md) | todo | 018 |
 | 021 | [Print the sensor case](021-print-sensor-case.md) | todo | – |
+| 022 | [Manual test: review fixes, page redesign, rate preset](022-test-review-fixes-and-rate-preset.md) | todo | 010, 011, 017 |
 
 ## Conventions
 
