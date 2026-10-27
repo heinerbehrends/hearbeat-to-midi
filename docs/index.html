@@ -433,6 +433,7 @@ const DEMO_DEFS = [
   ['step_beats', 'int', 16, 1, 64, 'stepped mode: beats the tempo holds (power of two)'],
   ['count_in_beats', 'int', 4, 0, 63, 'stepped mode: LED count-in beats before a step (0 = none)'],
   ['beats_per_bar', 'int', 4, 1, 16, 'transport LED: beats per bar (downbeat flash)'],
+  ['rate_preset', 'int', 0, -1, 1, 'rate preset in use: -1 slow, 0 medium, 1 fast (switch, CC 22 and set all change it)'],
   ['rate_slow_max_change', 'float', 0.00075, 0.0001, 0.02, 'rate slow: max tempo change per beat (fraction)'],
   ['rate_slow_tau_sec', 'float', 40, 1, 300, 'rate slow: heart rate smoothing time (s)'],
   ['rate_medium_max_change', 'float', 0.0015, 0.0001, 0.02, 'rate medium: max tempo change per beat (fraction)'],
@@ -523,8 +524,19 @@ class DemoTransport {
     const old = this.values[d.name];
     this.check(d, v, { ...this.values, [d.name]: v });
     this.values[d.name] = v;
-    if (old !== v) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}${source ? ' (' + source + ')' : ''}`);
+    this.changed(d, old, v, source);
     return old !== v;
+  }
+  // Logs a change like the device does; a new rate preset also changes the glide
+  changed(d, old, v, source) {
+    if (old === v) return;
+    this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}${source ? ' (' + source + ')' : ''}`);
+    if (d.name === 'rate_preset') {
+      const names = { '-1': 'slow', 0: 'medium', 1: 'fast' };
+      const pv = this.values, n = names[v];
+      this.out(`rate: ${names[old]} -> ${n} (${(pv['rate_' + n + '_max_change'] * 100).toFixed(3)} %/beat, tau ${pv['rate_' + n + '_tau_sec'].toFixed(0)} s)`);
+      this.sim.rate = v;
+    }
   }
   paramLine(d) {
     return `param ${d.name} ${d.type} ${this.format(d, this.values[d.name])} min=${this.format(d, d.min)} max=${this.format(d, d.max)} default=${this.format(d, d.def)} "${d.help}"`;
@@ -549,7 +561,7 @@ class DemoTransport {
         this.check(d, v, { ...this.values, [d.name]: v });
         this.values[d.name] = v;
         this.out(`ok ${d.name}=${this.format(d, v)}`);   // the device logs the change after the reply
-        if (old !== v) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}`);
+        this.changed(d, old, v);
       } else if (cmd === 'save' && !a) {
         this.saved = { ...this.values };
         this.out('ok saved');
@@ -560,12 +572,12 @@ class DemoTransport {
           this.check(d, d.def, { ...this.values, [d.name]: d.def });
           this.values[d.name] = d.def;
           this.out(`ok ${d.name}=${this.format(d, d.def)}`);
-          if (old !== d.def) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, d.def)}`);
+          this.changed(d, old, d.def);
         } else {
           for (const d of DEMO_DEFS) {
             const old = this.values[d.name];
             this.values[d.name] = d.def;
-            if (old !== d.def) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, d.def)}`);
+            this.changed(d, old, d.def);
           }
           this.out('ok reset');
         }
@@ -585,14 +597,16 @@ class DemoTransport {
   }
   // Like a DAW knob: control CCs on channel 16 (see Settings.h)
   simulateCc() {
-    const turn = this.ccTurn++ % 2;
+    const turn = this.ccTurn++ % 3;
     const cc = Math.floor(Math.random() * 128);
     try {
       if (turn === 0) {
         this.apply(this.def('feedback_offset_bpm'), Math.fround(Math.round(cc / 127 * 100) / 10), 'cc23=' + cc);
-      } else {
+      } else if (turn === 1) {
         const v = cc < 64 ? 1 : 2;
         if (this.apply(this.def('tempo_multiplier'), v, 'cc24=' + cc)) this.out(`clock: step_beats ${this.values.step_beats}, tempo_multiplier ${v} in effect`);
+      } else {
+        this.apply(this.def('rate_preset'), cc < 43 ? -1 : cc < 86 ? 0 : 1, 'cc22=' + cc);
       }
     } catch (e) {
       this.out(`param: cc refused: ${e}`);
@@ -607,12 +621,13 @@ class DemoTransport {
     const states = ['NoSensor', 'NoFinger', 'Acquiring', 'Locked'];
     const next = s.ticks < 2 ? 1 : s.ticks < 4 ? 2 : 3;
     if (next !== s.state) { this.out(`state: ${states[s.state]} -> ${states[next]}`); s.state = next; }
-    const tau = v.rate_medium_tau_sec;
+    const preset = ['slow', 'medium', 'fast'][s.rate + 1];
+    const tau = v['rate_' + preset + '_tau_sec'];
     if (s.state >= 2) s.hr += (raw - s.hr) * (1 - Math.exp(-4 / tau));
     s.target = s.hr + s.fb * v.feedback_offset_bpm;
     if (s.state === 3) {
       const beats = s.tempo / 60 * 4;
-      const maxStep = s.tempo * v.rate_medium_max_change * beats;
+      const maxStep = s.tempo * v['rate_' + preset + '_max_change'] * beats;
       s.tempo += Math.max(-maxStep, Math.min(maxStep, s.target - s.tempo));
     }
     const clock = Math.min(240, s.tempo * v.tempo_multiplier);
@@ -637,7 +652,7 @@ const GROUPS = [
 ];
 const LABELS = {
   tempo_multiplier: 'Tempo multiplier', step_beats: 'Step length', count_in_beats: 'Count-in', beats_per_bar: 'Beats per bar',
-  start_bpm: 'Start tempo',
+  start_bpm: 'Start tempo', rate_preset: 'Rate preset',
   rate_slow_max_change: 'Slow: max change', rate_slow_tau_sec: 'Slow: smoothing',
   rate_medium_max_change: 'Medium: max change', rate_medium_tau_sec: 'Medium: smoothing',
   rate_fast_max_change: 'Fast: max change', rate_fast_tau_sec: 'Fast: smoothing',
@@ -986,6 +1001,9 @@ function buildField(p) {
   } else if (p.name === 'step_beats' && p.type === 'int') {
     input = document.createElement('select');
     for (let v = 1; v <= max; v *= 2) if (v >= min) input.add(new Option(String(v), String(v)));
+  } else if (p.name === 'rate_preset' && p.type === 'int') {
+    input = document.createElement('select');
+    for (const [v, l] of [[-1, 'Slow'], [0, 'Medium'], [1, 'Fast']]) if (v >= min && v <= max) input.add(new Option(l, String(v)));
   } else if (p.name === 'tempo_multiplier' && p.type === 'int' && max - min <= 3) {
     input = document.createElement('select');
     for (let v = min; v <= max; v++) input.add(new Option('×' + v + (v === 1 ? ' (normal)' : v === 2 ? ' (double time)' : ''), String(v)));

@@ -83,6 +83,11 @@ struct RatePreset
 constexpr RatePreset RATE_SLOW = {"slow", 0.00075f, 40};
 constexpr RatePreset RATE_MEDIUM = {"medium", 0.0015f, 25};
 constexpr RatePreset RATE_FAST = {"fast", 0.004f, 12};
+// The preset in use: -1 slow, 0 medium, +1 fast. The rate switch (when moved),
+// CC 22 and `set` all change it, the last change wins. This default only holds
+// until the first switch reading (unless a saved value was loaded) and after
+// `reset`. [runtime: rate_preset]
+constexpr int RATE_PRESET = 0;
 
 // Ignore contact bounce shorter than this when a switch is flipped.
 constexpr uint32_t SWITCH_DEBOUNCE_MS = 30;

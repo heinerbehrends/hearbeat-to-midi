@@ -9,8 +9,9 @@ output "Heart Rate To MIDI".
 ## Acceptance criteria
 
 - [ ] [hw] In the DAW, map a knob or a clip envelope to CC 22–24 on channel 16.
-- [ ] [hw] **CC 22** rate slow / medium / fast: the glide speed audibly changes; moving the rate toggle
-      afterwards takes control back.
+- [ ] [hw] **CC 22** rate slow / medium / fast: the glide speed audibly changes and the settings page
+      shows the new preset; moving the rate toggle afterwards takes control back (a lane re-sending the
+      same CC value does not).
 - [ ] [hw] **CC 23** feedback strength 0–10 bpm: with feedback on − or +, the tempo shifts relative to
       the heart rate.
 - [ ] [hw] **CC 24** double time ×1 / ×2: switches on the bar line.

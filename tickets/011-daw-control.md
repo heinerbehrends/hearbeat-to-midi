@@ -25,10 +25,12 @@
       via `HeartTempo::setConfig` (glide continues).
 - [ ] [hw] Double-time changes by CC while playing land on the bar line (as 010): see 014.
 
-### Rate override
-- [x] [unit] The effective rate preset is the CC 22 override if one came since the rate switch last
-      moved, else the switch position (the last change wins).
-- [x] [log] Shown in the `Rate:` plotter field and as `rate: medium -> fast (cc22=127) (…)`.
+### Rate preset
+- [x] [unit] CC 22 sets `rate_preset` like the other CCs set their parameter; the rate switch sets it
+      when it is moved, `set` from the page or console any time (the last change wins). Earlier the CC
+      was an override that the switch cleared; since 2026-10-27 all three write the same setting.
+- [x] [log] Shown in the `Rate:` plotter field, as `param: rate_preset 0 -> 1 (cc22=127)` and
+      `rate: medium -> fast (…)`.
 
 ### Threading and load
 - [x] Packets are read in TinyUSB's receive callback (`tud_midi_rx_cb`, USB task), non-blocking, at most

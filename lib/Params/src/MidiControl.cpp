@@ -79,21 +79,12 @@ float midicontrol::valueFor(int control, uint8_t value)
   return 0;
 }
 
-void RateSelect::setSwitch(int pos)
+bool RateSwitchSource::update(int pos)
 {
-  if (switchKnown_ && pos == switch_)
-    return;
-  if (switchKnown_)
-    overridden_ = false; // the switch moved: it wins over an earlier CC
-  switch_ = pos;
-  switchKnown_ = true;
-}
-
-void RateSelect::setOverride(int pos, uint8_t ccValue)
-{
-  override_ = pos;
-  ccValue_ = ccValue;
-  overridden_ = true;
+  bool apply = known_ ? pos != pos_ : applyFirst_;
+  pos_ = pos;
+  known_ = true;
+  return apply;
 }
 
 bool MidiControl::feed(const uint8_t packet[4])
@@ -113,7 +104,7 @@ void MidiControl::feed(int control, uint8_t value)
   raw_[control] = value & 0x7F;
 }
 
-void MidiControl::apply(Params &params, RateSelect &rate, const Changed &changed, const Rejected &rejected)
+void MidiControl::apply(Params &params, const Changed &changed, const Rejected &rejected)
 {
   for (int c = 0; c < COUNT; c++)
   {
@@ -129,12 +120,7 @@ void MidiControl::apply(Params &params, RateSelect &rate, const Changed &changed
 
     char source[16];
     std::snprintf(source, sizeof(source), "cc%u=%u", (unsigned)ccOf(c), (unsigned)raw_[c]);
-    if (c == RATE)
-    {
-      rate.setOverride((int)value, raw_[c]);
-      continue;
-    }
-    int id = c == FEEDBACK_OFFSET ? params::FEEDBACK_OFFSET_BPM : params::TEMPO_MULTIPLIER;
+    int id = c == RATE ? params::RATE_PRESET : c == FEEDBACK_OFFSET ? params::FEEDBACK_OFFSET_BPM : params::TEMPO_MULTIPLIER;
     float old = params.get(id);
     if (value == old)
       continue;

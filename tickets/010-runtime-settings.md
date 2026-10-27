@@ -44,7 +44,8 @@
 - [x] The clock task and loop() read live values from atomics (no locks); the sensor task reads the
       serial port (non-blocking, every 100 ms), owns the registry and is its only writer.
 - [x] The rate switch still selects slow / medium / fast; the `rate_*` parameters change what each
-      position means, applied at once (glide continues).
+      position means, applied at once (glide continues). Since 2026-10-27 the preset in use is itself a
+      setting, `rate_preset`, changed by the switch (when moved), CC 22 and `set`.
 - [x] [unit] A `step_beats` change while playing takes effect on a beat that is a phrase boundary of
       both the old and the new length (every max(old, new) beats from Start), so the phrase grid stays
       in phase with the DAW (`test_step_change_waits_for_common_boundary`). While stopped it applies at
@@ -74,6 +75,7 @@ As at implementation; for the current list see `get` or `lib/Params/src/Params.c
 | step_beats | int | 16 | power of two 1–64 |
 | count_in_beats | int | 4 | 0–63, < step_beats (0 = no count-in) |
 | beats_per_bar | int | 4 | 1–16 |
+| rate_preset | int | 0 (medium) | −1 slow, 0 medium, 1 fast; the switch position at power-on when not saved |
 | rate_slow_max_change / _tau_sec | float | 0.00075 / 40 | 0.0001–0.02 / 1–300 s |
 | rate_medium_max_change / _tau_sec | float | 0.0015 / 25 | 0.0001–0.02 / 1–300 s |
 | rate_fast_max_change / _tau_sec | float | 0.004 / 12 | 0.0001–0.02 / 1–300 s |

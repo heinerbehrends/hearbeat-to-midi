@@ -21,7 +21,8 @@ const Def DEFS[COUNT] = {
     {"step_beats", Type::Int, s::STEP_BEATS, 1, 64, "stepped mode: beats the tempo holds (power of two)"},
     {"count_in_beats", Type::Int, s::COUNT_IN_BEATS, 0, 63, "stepped mode: LED count-in beats before a step (0 = none)"},
     {"beats_per_bar", Type::Int, s::BEATS_PER_BAR, 1, 16, "transport LED: beats per bar (downbeat flash)"},
-    // Rate switch presets
+    // Rate presets: the one in use, then what each one means
+    {"rate_preset", Type::Int, s::RATE_PRESET, -1, 1, "rate preset in use: -1 slow, 0 medium, 1 fast (switch, CC 22 and set all change it)"},
     {"rate_slow_max_change", Type::Float, s::RATE_SLOW.maxChangePerBeat, 0.0001f, 0.02f,
      "rate slow: max tempo change per beat (fraction)"},
     {"rate_slow_tau_sec", Type::Float, s::RATE_SLOW.tauSec, 1, 300, "rate slow: heart rate smoothing time (s)"},
@@ -248,6 +249,8 @@ int Params::load(ParamStore &store)
 {
   resetAll();
   err_[0] = 0;
+  for (int i = 0; i < COUNT; i++)
+    loaded_[i] = false;
   if (store.schema() != SCHEMA_VERSION)
     return 0;
   int loaded = 0;
@@ -259,12 +262,15 @@ int Params::load(ParamStore &store)
     if (store.load(key, &x) && checkValue(i, x))
     {
       v_[i] = x;
+      loaded_[i] = true;
       loaded++;
     }
   }
   if (!checkSet(v_, -1)) // error() keeps the rule that failed
   {
     resetAll();
+    for (int i = 0; i < COUNT; i++)
+      loaded_[i] = false;
     return 0;
   }
   return loaded;

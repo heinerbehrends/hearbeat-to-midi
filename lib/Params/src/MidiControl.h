@@ -6,8 +6,8 @@
 // latest value per control, so a knob sweep costs one change per control and
 // pass, however many CCs arrive.
 // apply() then sends the controls whose mapped value changed through
-// Params::set, the same validation as the serial `set`, and the rate preset to
-// a RateSelect. Nothing is saved: a later `save` stores the values, like `set`.
+// Params::set, the same validation as the serial `set` (CC 22 sets rate_preset
+// like the others). Nothing is saved: a later `save` stores the values, like `set`.
 #pragma once
 #include <cstdint>
 #include <functional>
@@ -40,25 +40,21 @@ float valueFor(int control, uint8_t value);
 
 } // namespace midicontrol
 
-// The effective rate preset: the rate switch position, or a CC override set
-// since the switch last moved (the last change wins).
-class RateSelect
+// The rate switch as one source of the rate_preset setting (next to CC 22 and
+// `set`; the last change wins): its position counts when the switch moves, and
+// at boot only when no saved preset was loaded.
+class RateSwitchSource
 {
 public:
-  // The switch position, called on every pass; a move clears the override.
-  void setSwitch(int pos);
-  // An override from CC (-1 slow, 0 medium, +1 fast) and the CC value it came from.
-  void setOverride(int pos, uint8_t ccValue);
-  int effective() const { return overridden_ ? override_ : switch_; }
-  bool overridden() const { return overridden_; }
-  uint8_t ccValue() const { return ccValue_; }
+  explicit RateSwitchSource(bool applyFirst) : applyFirst_(applyFirst) {}
+  // The position read on this pass (-1 slow, 0 medium, +1 fast); true when
+  // rate_preset should take it.
+  bool update(int pos);
 
 private:
-  int switch_ = 0;
-  bool switchKnown_ = false;
-  bool overridden_ = false;
-  int override_ = 0;
-  uint8_t ccValue_ = 0;
+  bool applyFirst_;
+  bool known_ = false;
+  int pos_ = 0;
 };
 
 class MidiControl
@@ -76,7 +72,7 @@ public:
   void feed(int control, uint8_t value);
   // Applies the controls whose mapped value changed since they last applied.
   // A value equal to the current one changes nothing and isn't reported.
-  void apply(Params &params, RateSelect &rate, const Changed &changed, const Rejected &rejected);
+  void apply(Params &params, const Changed &changed, const Rejected &rejected);
 
 private:
   bool pending_[midicontrol::COUNT] = {};

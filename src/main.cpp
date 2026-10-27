@@ -462,7 +462,9 @@ static void sensorTask(void *)
                        [&](int id, float oldValue, float newValue) { paramChanged(id, oldValue, newValue, nullptr); });
   // CCs from the DAW: same checks and live rules as `set`, not saved
   MidiControl midiControl;
-  RateSelect rateSelect; // rate switch, or the CC override since it last moved
+  // The rate switch changes rate_preset when it moves; at boot its position
+  // applies only when no saved preset was loaded (CC 22 and set change it too)
+  RateSwitchSource rateSwitchSource(!runtime.loadedFromStore(params::RATE_PRESET));
   const MidiControl::Changed ccChanged = paramChanged;
   const MidiControl::Rejected ccRejected = [](const char *error, const char *source) {
     Serial.printf("param: %s refused: %s\r\n", source, error);
@@ -479,14 +481,20 @@ static void sensorTask(void *)
       console.feed((char)Serial.read());
 
     // The switch first, so a CC in the same pass wins (it came later)
-    rateSelect.setSwitch(rateSwitch.load());
+    int switchPos = rateSwitch.load();
+    if (rateSwitchSource.update(switchPos) && switchPos != runtime.getInt(params::RATE_PRESET))
+    {
+      float old = runtime.get(params::RATE_PRESET);
+      if (runtime.set(params::RATE_PRESET, switchPos))
+        paramChanged(params::RATE_PRESET, old, switchPos, "switch");
+    }
     for (int c = 0; c < midicontrol::COUNT; c++)
     {
       int v = ccLatest[c].exchange(0);
       if (v > 0)
         midiControl.feed(c, (uint8_t)(v - 1));
     }
-    midiControl.apply(runtime, rateSelect, ccChanged, ccRejected);
+    midiControl.apply(runtime, ccChanged, ccRejected);
 
     // Plain text lines are shown as-is by serial plotters
     int fb = feedbackSwitch.load();
@@ -499,15 +507,13 @@ static void sensorTask(void *)
       heartTempo.setFeedback(fb);
       appliedFeedback = fb;
     }
-    int rate = rateSelect.effective();
+    int rate = runtime.getInt(params::RATE_PRESET); // switch, CC 22 or set: the last change wins
     if (rate != appliedRate)
     {
       if (appliedRate == 99)
         Serial.printf("rate: %s", rateName(rate));
       else
         Serial.printf("rate: %s -> %s", rateName(appliedRate), rateName(rate));
-      if (rateSelect.overridden())
-        Serial.printf(" (cc%u=%u)", (unsigned)CC_RATE, (unsigned)rateSelect.ccValue());
       Serial.printf(" (%.3f %%/beat, tau %.0f s)\r\n", runtime.maxChangePerBeat(rate) * 100, runtime.tauSec(rate));
       appliedRate = rate;
       configChanged = true;
