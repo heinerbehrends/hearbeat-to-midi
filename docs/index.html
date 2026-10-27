@@ -134,6 +134,8 @@ fieldset.group, details.group { border: 1px solid var(--border); border-radius: 
 fieldset.group > legend, details.group > summary { font-weight: 650; padding: 0 .3rem; }
 details.group > summary { cursor: pointer; padding: .3rem; }
 details.group > summary .note { font-weight: 400; color: var(--muted); }
+details.group > summary .count { font-weight: 400; color: var(--warn-text); }
+details.group fieldset.group { margin: .6rem 0 .4rem; }
 .field {
   display: grid; gap: .1rem .75rem;
   grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr);
@@ -622,13 +624,16 @@ class DemoTransport {
 // ---------------------------------------------------------------------------
 // Presentation hints (the form itself is built from the `get` output)
 // ---------------------------------------------------------------------------
+// The main settings are always shown, in this order; every other group sits behind "More settings"
+const MAIN = ['tempo_multiplier', 'step_beats', 'beats_per_bar', 'rate_preset', 'feedback_offset_bpm'];
 const GROUPS = [
-  { id: 'tempo', title: 'Tempo & stepping', match: (n) => ['tempo_multiplier', 'step_beats', 'count_in_beats', 'beats_per_bar', 'start_bpm'].includes(n) },
+  { id: 'main', title: 'Main settings', match: (n) => MAIN.includes(n) },
+  { id: 'tempo', title: 'Tempo & stepping', match: (n) => ['count_in_beats', 'start_bpm'].includes(n) },
   { id: 'rate', title: 'Rate presets', match: (n) => n.startsWith('rate_') },
-  { id: 'feedback', title: 'Feedback', match: (n) => n === 'feedback_offset_bpm' || n.startsWith('steer_') },
+  { id: 'feedback', title: 'Feedback steering', match: (n) => n.startsWith('steer_') },
   { id: 'leds', title: 'LEDs', match: (n) => n.startsWith('led_') || n === 'transport_led_level' || n === 'stopped_level' },
+  { id: 'filter', title: 'Heart rate filter', match: (n) => /^(caution_|gate_)/.test(n) || ['agree_tol_bpm', 'lock_timeout_polls', 'invalid_to_no_finger'].includes(n) },
   { id: 'other', title: 'Other', match: () => false },
-  { id: 'filter', title: 'Heart rate filter', advanced: true, note: 'advanced', match: (n) => /^(caution_|gate_)/.test(n) || ['agree_tol_bpm', 'lock_timeout_polls', 'invalid_to_no_finger'].includes(n) },
 ];
 const LABELS = {
   tempo_multiplier: 'Tempo multiplier', step_beats: 'Step length', count_in_beats: 'Count-in', beats_per_bar: 'Beats per bar',
@@ -679,6 +684,8 @@ const state = {
   lastLineAt: 0,
   history: [],           // { t, hr, target, tempo, clock }
   loading: false,
+  moreOpen: false,       // "More settings" stays open across a rebuild of the form
+  more: null,            // { details, count } of the "More settings" block
 };
 
 const PARAM_RE = /^param (\S+) (\S+) (\S+) min=(\S+) max=(\S+) default=(\S+) "(.*)"$/;
@@ -903,33 +910,61 @@ function buildForm() {
   const form = $('form');
   form.innerHTML = '';
   state.fields.clear();
+  state.more = null;
   const byGroup = new Map(GROUPS.map((g) => [g.id, []]));
   for (const p of state.params.values()) {
     const g = GROUPS.find((gr) => gr.match(p.name)) || GROUPS.find((gr) => gr.id === 'other');
     byGroup.get(g.id).push(p);
   }
-  for (const g of GROUPS) {
+  byGroup.get('main').sort((a, b) => MAIN.indexOf(a.name) - MAIN.indexOf(b.name));
+  const fieldsetFor = (g, list) => {
+    const box = document.createElement('fieldset');
+    box.className = 'group';
+    const lg = document.createElement('legend'); lg.textContent = g.title; box.append(lg);
+    for (const p of list) box.append(buildField(p));
+    return box;
+  };
+  const main = byGroup.get('main');
+  if (main.length) form.append(fieldsetFor(GROUPS[0], main));
+
+  // Everything else is collapsed into one "More settings" block
+  const more = document.createElement('details');
+  more.className = 'group';
+  more.open = state.moreOpen;
+  more.addEventListener('toggle', () => { state.moreOpen = more.open; });
+  const sum = document.createElement('summary');
+  sum.append('More settings ');
+  const note = document.createElement('span'); note.className = 'note';
+  const count = document.createElement('span'); count.className = 'count';
+  sum.append(note, ' ', count);
+  more.append(sum);
+  const titles = [];
+  for (const g of GROUPS.slice(1)) {
     const list = byGroup.get(g.id);
     if (!list.length) continue;
-    let box;
-    if (g.advanced) {
-      box = document.createElement('details');
-      box.className = 'group';
-      const sum = document.createElement('summary');
-      sum.innerHTML = '';
-      sum.append(g.title + ' ');
-      const note = document.createElement('span'); note.className = 'note'; note.textContent = '(' + g.note + ')';
-      sum.append(note);
-      box.append(sum);
-    } else {
-      box = document.createElement('fieldset');
-      box.className = 'group';
-      const lg = document.createElement('legend'); lg.textContent = g.title; box.append(lg);
-    }
-    for (const p of list) box.append(buildField(p));
-    form.append(box);
+    titles.push(g.title);
+    more.append(fieldsetFor(g, list));
   }
+  note.textContent = '(' + titles.join(', ') + ')';
+  state.more = { details: more, count };
+  if (titles.length) form.append(more);
+  updateMoreSummary();
   updateControls();
+}
+
+// The collapsed "More settings" line says when something inside needs attention
+function updateMoreSummary() {
+  if (!state.more) return;
+  let changed = 0, errors = 0;
+  for (const f of state.fields.values()) {
+    if (!state.more.details.contains(f.root)) continue;
+    if (f.root.classList.contains('changed')) changed++;
+    if (f.root.classList.contains('has-error')) errors++;
+  }
+  const parts = [];
+  if (changed) parts.push(changed + ' not saved');
+  if (errors) parts.push(errors + ' with an error');
+  state.more.count.textContent = parts.length ? '· ' + parts.join(', ') : '';
 }
 
 function buildField(p) {
@@ -1023,6 +1058,7 @@ function refreshMeta(name) {
   f.root.classList.toggle('changed', changed);
   f.meta.textContent = `Default ${p.def}${range}` + (changed ? ` · saved value ${saved} (not saved yet)` : '');
   f.derived.textContent = derivedFor(name, f.input.type === 'checkbox' ? '' : f.input.value);
+  updateMoreSummary();
 }
 function setMsg(name, text) {
   const f = state.fields.get(name);
@@ -1030,6 +1066,7 @@ function setMsg(name, text) {
   f.msg.textContent = text;
   f.root.classList.toggle('has-error', !!text);
   f.input.setAttribute('aria-invalid', text ? 'true' : 'false');
+  updateMoreSummary();
 }
 
 async function sendSet(name) {

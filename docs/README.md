@@ -8,6 +8,9 @@ file (HTML + JavaScript, no build step, no external resources), so it also works
 
 - **Connect** picks the serial port and reads every setting with `get`. The form is built from that
   listing, so settings added by newer firmware show up by themselves (unknown ones under "Other").
+- The main settings (double time, step length, beats per bar, rate preset, feedback offset) are always
+  shown; everything else is collapsed under **More settings**, whose line says when a hidden field has
+  an unsaved change or an error.
 - Changing a field sends `set <name> <value>` at once. If the device refuses it, the reason is shown next
   to the field and the field goes back to the device's value. **Default** sends `reset <name>`.
 - **Unsaved changes**: a change applies at once but is lost on a restart until you press **Save**
