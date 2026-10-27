@@ -17,7 +17,7 @@ USB MIDI clock whose tempo slowly follows the heart rate. It shows up as **"Hear
 | Control | Positions |
 | --- | --- |
 | Feedback switch | − / follow / + |
-| Rate switch | slow / medium / fast (how quickly the tempo moves); dropping it for CC 22 / the settings page is under consideration ([ticket 018](tickets/018-drop-rate-toggle.md)) |
+| Rate switch | slow / medium / fast (how quickly the tempo moves). The settings page (`rate_preset`) and CC 22 choose it too; the last change wins. Dropping the switch is under consideration ([ticket 018](tickets/018-drop-rate-toggle.md)) |
 | Transport switch | stop / run / run stepped (until wired: the BOOT button cycles these) |
 
 Two LEDs:
@@ -46,11 +46,14 @@ then one `ok …` or `err …` line.
 | `set <name> <value>` | changes it at once (`ok step_beats=32`, or `err step_beats: must be a power of two 1..64`); not saved yet |
 | `save` | stores the current values, so they apply after a restart |
 | `reset` | all values back to the defaults in `include/Settings.h` (then `save`) |
-| `reset <name>` | one value back to its default (then `save`) |
+| `reset <name>` | one value back to its default (then `save`); checked like `set`, so it is refused if the default would break a rule with another value (`step_beats` below `count_in_beats`, …): reset that one first, or `reset` |
 
 - Changes are logged as `param: step_beats 16 -> 32`. While playing, a new `step_beats` starts on a
   phrase boundary of both lengths and `tempo_multiplier` on a bar line, so the DAW stays in phase.
 - Values are checked like the build checks `Settings.h` (ranges, `steer_low_bpm` < `steer_high_bpm`, …).
+- `rate_preset` (−1 slow, 0 medium, 1 fast) is the preset in use. The rate switch (when it is moved),
+  CC 22 and `set` all change it, the last change wins; a `param: rate_preset 0 -> 1 (switch)` line
+  says which. At power-on a saved value applies; without one, the switch position.
 - Nothing is permanent until `save`: after an accidental `set` or `reset`, a restart brings the saved
   values back. A saved value overrides the one in `Settings.h` until `reset` + `save`; values never changed follow
   `Settings.h`. Pins, the device name and other hardware settings are compile-time only.
@@ -71,12 +74,12 @@ MIDI port:
 
 | CC | Changes | Values |
 | --- | --- | --- |
-| 22 | rate preset | 0–42 slow, 43–85 medium, 86–127 fast; overrides the rate switch until the switch is moved again (the last change wins) |
+| 22 | `rate_preset` | 0–42 slow (−1), 43–85 medium (0), 86–127 fast (1); the rate switch takes over again when it is moved (the last change wins). After that, only a CC in a *different* zone acts again: a lane re-sending the same value at play start is ignored |
 | 23 | `feedback_offset_bpm` | 0–127 → 0–10 bpm, in 0.1 bpm steps |
 | 24 | `tempo_multiplier` | 0–63 → 1, 64–127 → 2 (double time) |
 
 - They work like `set`: the same checks, logged as `param: tempo_multiplier 1 -> 2 (cc24=100)` (the
-  rate as `rate: medium -> fast (cc22=127)`), and the same timing (double time on a bar line, while
+  rate also as `rate: medium -> fast (…)`), and the same timing (double time on a bar line, while
   stopped at once). The step length isn't a CC (CC 21 was removed): set it on the settings page or with
   `set step_beats`.
 - **Not saved:** after a restart the saved values apply again; type `save` to keep the current ones.

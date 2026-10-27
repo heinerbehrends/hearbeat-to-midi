@@ -9,9 +9,10 @@
 - [ ] If dropped:
   - [ ] Enclosure layout without the rate switch ([`hardware/enclosure/README.md`](../hardware/enclosure/README.md):
         layout, wiring table; D8 / D9 become free).
-  - [ ] The rate preset comes from the settings page / `set` (a new runtime setting for the active
-        preset, saved like the others) and CC 22; the CC 22 override logic (`RateSelect`,
-        "the last change wins") is simplified accordingly, with its unit tests.
+  - [x] The rate preset comes from the settings page / `set` (the runtime setting `rate_preset`, saved
+        like the others) and CC 22 (done 2026-10-27, with the switch still in: it writes the same setting
+        when moved; `RateSwitchSource` in `lib/Params/src/MidiControl.h`). Dropping the switch then only
+        removes that source and the pins.
   - [ ] README (controls table, "Control from the DAW"), ticket 002 (marked superseded) and
         `include/Settings.h` (rate pins) updated.
   - [ ] [log] `Rate:` and the `rate: …` line still show the effective preset.

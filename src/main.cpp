@@ -462,7 +462,9 @@ static void sensorTask(void *)
                        [&](int id, float oldValue, float newValue) { paramChanged(id, oldValue, newValue, nullptr); });
   // CCs from the DAW: same checks and live rules as `set`, not saved
   MidiControl midiControl;
-  RateSelect rateSelect; // rate switch, or the CC override since it last moved
+  // The rate switch changes rate_preset when it moves; at boot its position
+  // applies only when no saved preset was loaded (CC 22 and set change it too)
+  RateSwitchSource rateSwitchSource(!runtime.loadedFromStore(params::RATE_PRESET));
   const MidiControl::Changed ccChanged = paramChanged;
   const MidiControl::Rejected ccRejected = [](const char *error, const char *source) {
     Serial.printf("param: %s refused: %s\r\n", source, error);
@@ -479,14 +481,20 @@ static void sensorTask(void *)
       console.feed((char)Serial.read());
 
     // The switch first, so a CC in the same pass wins (it came later)
-    rateSelect.setSwitch(rateSwitch.load());
+    int switchPos = rateSwitch.load();
+    if (rateSwitchSource.update(switchPos) && switchPos != runtime.getInt(params::RATE_PRESET))
+    {
+      float old = runtime.get(params::RATE_PRESET);
+      if (runtime.set(params::RATE_PRESET, switchPos))
+        paramChanged(params::RATE_PRESET, old, switchPos, "switch");
+    }
     for (int c = 0; c < midicontrol::COUNT; c++)
     {
       int v = ccLatest[c].exchange(0);
       if (v > 0)
         midiControl.feed(c, (uint8_t)(v - 1));
     }
-    midiControl.apply(runtime, rateSelect, ccChanged, ccRejected);
+    midiControl.apply(runtime, ccChanged, ccRejected);
 
     // Plain text lines are shown as-is by serial plotters
     int fb = feedbackSwitch.load();
@@ -499,15 +507,13 @@ static void sensorTask(void *)
       heartTempo.setFeedback(fb);
       appliedFeedback = fb;
     }
-    int rate = rateSelect.effective();
+    int rate = runtime.getInt(params::RATE_PRESET); // switch, CC 22 or set: the last change wins
     if (rate != appliedRate)
     {
       if (appliedRate == 99)
         Serial.printf("rate: %s", rateName(rate));
       else
         Serial.printf("rate: %s -> %s", rateName(appliedRate), rateName(rate));
-      if (rateSelect.overridden())
-        Serial.printf(" (cc%u=%u)", (unsigned)CC_RATE, (unsigned)rateSelect.ccValue());
       Serial.printf(" (%.3f %%/beat, tau %.0f s)\r\n", runtime.maxChangePerBeat(rate) * 100, runtime.tauSec(rate));
       appliedRate = rate;
       configChanged = true;
@@ -597,7 +603,10 @@ void setup()
   Serial.setRxBufferSize(512); // room for a few setting commands between reads
   Serial.begin(115200); // DevKit: hardware UART (COM port); XIAO: USB CDC next to MIDI
 #if ARDUINO_USB_CDC_ON_BOOT
-  Serial.setTxTimeoutMs(0); // never stall the sensor task when no serial monitor is open
+  // USB CDC drops what it can't send: nothing at all while the host has DTR clear
+  // (no monitor open), and with a 0 ms timeout also the tail of a line when the
+  // 64-byte FIFO is full. A short timeout lets a burst like `get` drain.
+  Serial.setTxTimeoutMs(20);
 #endif
 
   USB.productName(DEVICE_NAME);
@@ -616,6 +625,8 @@ void setup()
   if (!nvs.begin("hr2midi"))
     Serial.printf("params: NVS unavailable, using defaults\r\n");
   int loaded = runtime.load(nvs);
+  if (runtime.error()[0]) // the saved set breaks a rule (a default moved since the save)
+    Serial.printf("params: saved values ignored: %s\r\n", runtime.error());
   Serial.printf("params: %d saved value(s) loaded, type help for commands\r\n", loaded);
   publishParams();
   appliedStepBeats.store(runtime.getInt(params::STEP_BEATS));

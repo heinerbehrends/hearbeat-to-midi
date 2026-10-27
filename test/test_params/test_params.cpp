@@ -99,6 +99,7 @@ void test_defaults_come_from_settings(void)
 {
   Params p;
   TEST_ASSERT_EQUAL(settings::STEP_BEATS, p.getInt(STEP_BEATS));
+  TEST_ASSERT_EQUAL(settings::RATE_PRESET, p.getInt(RATE_PRESET));
   TEST_ASSERT_EQUAL_FLOAT(settings::RATE_SLOW.maxChangePerBeat, p.get(RATE_SLOW_MAX_CHANGE));
   TEST_ASSERT_EQUAL_FLOAT(settings::RATE_FAST.tauSec, p.get(RATE_FAST_TAU_SEC));
   TEST_ASSERT_EQUAL_FLOAT(settings::STEER_HIGH_BPM, p.get(STEER_HIGH_BPM));
@@ -262,6 +263,8 @@ void test_save_and_load_round_trip(void)
 
   Params b;
   TEST_ASSERT_EQUAL(3, b.load(store));
+  TEST_ASSERT_TRUE(b.loadedFromStore(STEP_BEATS));
+  TEST_ASSERT_FALSE(b.loadedFromStore(LED_LEVEL));
   TEST_ASSERT_EQUAL(32, b.getInt(STEP_BEATS));
   TEST_ASSERT_EQUAL_FLOAT(60, b.get(RATE_SLOW_TAU_SEC));
   TEST_ASSERT_FALSE(b.getBool(LED_SHOW_EVERY_MISS));
@@ -280,6 +283,7 @@ void test_load_without_saved_values_gives_defaults(void)
   p.set(STEP_BEATS, 64);
   TEST_ASSERT_EQUAL(0, p.load(store));
   TEST_ASSERT_EQUAL(settings::STEP_BEATS, p.getInt(STEP_BEATS));
+  TEST_ASSERT_FALSE(p.loadedFromStore(STEP_BEATS));
 }
 
 void test_load_ignores_other_schema_version(void)
@@ -506,12 +510,11 @@ static Packet cc(uint8_t number, uint8_t value, uint8_t channel = settings::CONT
   return {{0x0B, (uint8_t)(0xB0 | (channel - 1)), number, value}};
 }
 
-// MidiControl + RateSelect + Params, collecting the log lines main.cpp would print
+// MidiControl + Params, collecting the log lines main.cpp would print
 struct CcRig
 {
   Params params;
   MidiControl control;
-  RateSelect rate;
   std::vector<std::string> changes;
   std::vector<std::string> refused;
 
@@ -521,7 +524,7 @@ struct CcRig
     for (const Packet &p : packets)
       control.feed(p.b);
     control.apply(
-        params, rate,
+        params,
         [this](int id, float o, float n, const char *source) {
           char buf[80];
           std::snprintf(buf, sizeof(buf), "%s %g -> %g (%s)", def(id).name, o, n, source);
@@ -553,6 +556,7 @@ void test_cc_mappings(void)
   for (int v = 0; v < 128; v++)
   {
     Params p;
+    TEST_ASSERT_TRUE(p.set(RATE_PRESET, mc::rateFor(v)));
     TEST_ASSERT_TRUE(p.set(FEEDBACK_OFFSET_BPM, mc::feedbackOffsetFor(v)));
     TEST_ASSERT_TRUE(p.set(TEMPO_MULTIPLIER, mc::tempoMultiplierFor(v)));
   }
@@ -585,7 +589,7 @@ void test_cc_filtering(void)
   r.pass({cc(20, 0), cc(52, 127), cc(21, 127), cc(22, 127, 1), {{0x09, 0x9F, 22, 127}}});
   TEST_ASSERT_EQUAL(0, (int)r.changes.size());
   TEST_ASSERT_EQUAL(settings::STEP_BEATS, r.params.getInt(STEP_BEATS));
-  TEST_ASSERT_FALSE(r.rate.overridden());
+  TEST_ASSERT_EQUAL(settings::RATE_PRESET, r.params.getInt(RATE_PRESET));
 }
 
 void test_cc_changes_params_like_set(void)
@@ -631,42 +635,106 @@ void test_cc_only_acts_on_a_changed_value(void)
   TEST_ASSERT_EQUAL(1, r.params.getInt(TEMPO_MULTIPLIER));
 }
 
-void test_cc_rate_override(void)
+void test_cc_rate_sets_the_preset(void)
 {
-  RateSelect rs;
-  rs.setSwitch(0);
-  TEST_ASSERT_EQUAL(0, rs.effective());
-  TEST_ASSERT_FALSE(rs.overridden());
-  // CC overrides the switch
-  rs.setOverride(1, 100);
-  TEST_ASSERT_EQUAL(1, rs.effective());
-  TEST_ASSERT_TRUE(rs.overridden());
-  // The switch staying where it is keeps the override
-  rs.setSwitch(0);
-  TEST_ASSERT_EQUAL(1, rs.effective());
-  // Moving it wins
-  rs.setSwitch(-1);
-  TEST_ASSERT_EQUAL(-1, rs.effective());
-  TEST_ASSERT_FALSE(rs.overridden());
-  // ...until the next CC
-  rs.setOverride(0, 60);
-  TEST_ASSERT_EQUAL(0, rs.effective());
-  TEST_ASSERT_EQUAL(60, rs.ccValue());
-
-  // Through MidiControl: zones, only on change, no parameter touched
   CcRig r;
-  r.rate.setSwitch(0);
   r.pass({cc(22, 127)});
-  TEST_ASSERT_EQUAL(1, r.rate.effective());
-  r.rate.setSwitch(-1); // switch moved: slow
-  r.pass({cc(22, 120)}); // same zone as before: no change, the switch keeps it
-  TEST_ASSERT_EQUAL(-1, r.rate.effective());
+  TEST_ASSERT_EQUAL(1, r.params.getInt(RATE_PRESET));
+  TEST_ASSERT_EQUAL_STRING("rate_preset 0 -> 1 (cc22=127)", r.changes[0].c_str());
+  r.pass({cc(22, 120)}); // same zone: nothing
+  TEST_ASSERT_EQUAL(1, (int)r.changes.size());
   r.pass({cc(22, 50)});
-  TEST_ASSERT_EQUAL(0, r.rate.effective());
-  TEST_ASSERT_EQUAL(0, (int)r.changes.size());
+  TEST_ASSERT_EQUAL(0, r.params.getInt(RATE_PRESET));
+  TEST_ASSERT_EQUAL(2, (int)r.changes.size());
+  // Last change wins: a set in between (switch, page) holds until the CC's zone changes
+  TEST_ASSERT_TRUE(r.params.set(RATE_PRESET, -1));
+  r.pass({cc(22, 60)}); // still the medium zone: nothing
+  TEST_ASSERT_EQUAL(-1, r.params.getInt(RATE_PRESET));
+  r.pass({cc(22, 100)});
+  TEST_ASSERT_EQUAL(1, r.params.getInt(RATE_PRESET));
+}
+
+void test_rate_switch_source(void)
+{
+  // No saved preset: the first reading applies, after that only a move
+  RateSwitchSource a(true);
+  TEST_ASSERT_TRUE(a.update(1));
+  TEST_ASSERT_FALSE(a.update(1));
+  TEST_ASSERT_TRUE(a.update(-1));
+  TEST_ASSERT_FALSE(a.update(-1));
+  // A saved preset: the switch counts only once it moves
+  RateSwitchSource b(false);
+  TEST_ASSERT_FALSE(b.update(1));
+  TEST_ASSERT_FALSE(b.update(1));
+  TEST_ASSERT_TRUE(b.update(0));
 }
 
 #ifdef ARDUINO
+void test_parse_int_edge_cases(void)
+{
+  Params p;
+  float v;
+  TEST_ASSERT_TRUE(p.parse(LED_LEVEL, "+40", &v));
+  TEST_ASSERT_EQUAL_FLOAT(40, v);
+  TEST_ASSERT_TRUE(p.parse(LED_LEVEL, "-5", &v)); // parses, then fails the range check
+  TEST_ASSERT_FALSE(p.set(LED_LEVEL, v));
+  TEST_ASSERT_TRUE(p.parse(LED_LEVEL, "99999999999", &v)); // beyond long: clamped, then out of range
+  TEST_ASSERT_FALSE(p.set(LED_LEVEL, v));
+  TEST_ASSERT_FALSE(p.parse(LED_LEVEL, "0x10", &v));
+  TEST_ASSERT_FALSE(p.parse(LED_LEVEL, "", &v));
+  TEST_ASSERT_FALSE(p.parse(RATE_SLOW_MAX_CHANGE, "inf", &v));
+  TEST_ASSERT_FALSE(p.parse(RATE_SLOW_MAX_CHANGE, "", &v));
+  TEST_ASSERT_EQUAL(settings::LED_LEVEL, p.getInt(LED_LEVEL));
+}
+
+void test_load_of_inconsistent_set_names_the_rule(void)
+{
+  MemStore store;
+  store.version = SCHEMA_VERSION;
+  store.values["steer_low_bpm"] = 140; // above the default steer_high_bpm: as if that default moved
+  Params p;
+  TEST_ASSERT_EQUAL(0, p.load(store));
+  TEST_ASSERT_EQUAL_STRING("steer_low_bpm (140) must be below steer_high_bpm (130)", p.error());
+  // A load that works clears the message
+  store.values.clear();
+  TEST_ASSERT_EQUAL(0, p.load(store));
+  TEST_ASSERT_EQUAL_STRING("", p.error());
+}
+
+// A store whose writes fail (NVS full or unavailable)
+class FailingStore : public MemStore
+{
+public:
+  bool store(const char *, float) override { return false; }
+};
+
+void test_cmd_save_reports_a_store_failure(void)
+{
+  Params params;
+  FailingStore store;
+  std::vector<std::string> lines;
+  ParamConsole console(params, store, [&](const char *l) { lines.push_back(l); });
+  console.handleLine("set led_level 40");
+  console.handleLine("save");
+  TEST_ASSERT_EQUAL_STRING("err save failed", lines.back().c_str());
+  TEST_ASSERT_EQUAL(40, params.getInt(LED_LEVEL)); // the running value is kept
+}
+
+void test_cmd_reset_one_is_checked_like_set(void)
+{
+  Rig r;
+  r.run("set step_beats 32");
+  r.run("set count_in_beats 16");
+  // The default step length would not be above the count-in: refused, nothing changes
+  TEST_ASSERT_EQUAL_STRING("err step_beats: must be above count_in_beats (16)", r.run("reset step_beats").c_str());
+  TEST_ASSERT_EQUAL(32, r.params.getInt(STEP_BEATS));
+  r.changes.clear();
+  TEST_ASSERT_TRUE(startsWith(r.run("reset count_in_beats"), "ok count_in_beats="));
+  TEST_ASSERT_TRUE(startsWith(r.run("reset step_beats"), "ok step_beats="));
+  TEST_ASSERT_EQUAL(settings::STEP_BEATS, r.params.getInt(STEP_BEATS));
+  TEST_ASSERT_EQUAL(2, (int)r.changes.size());
+}
+
 void test_nvs_round_trip(void);
 #endif
 
@@ -696,6 +764,10 @@ static void runTests()
   RUN_TEST(test_cmd_help_and_reply_format);
   RUN_TEST(test_cmd_line_endings_and_whitespace);
   RUN_TEST(test_cmd_overlong_line_is_rejected);
+  RUN_TEST(test_parse_int_edge_cases);
+  RUN_TEST(test_load_of_inconsistent_set_names_the_rule);
+  RUN_TEST(test_cmd_save_reports_a_store_failure);
+  RUN_TEST(test_cmd_reset_one_is_checked_like_set);
   RUN_TEST(test_step_change_waits_for_common_boundary);
   RUN_TEST(test_tempo_multiplier_is_1_or_2);
   RUN_TEST(test_multiplier_change_lands_on_a_bar_line);
@@ -704,7 +776,8 @@ static void runTests()
   RUN_TEST(test_cc_filtering);
   RUN_TEST(test_cc_changes_params_like_set);
   RUN_TEST(test_cc_only_acts_on_a_changed_value);
-  RUN_TEST(test_cc_rate_override);
+  RUN_TEST(test_cc_rate_sets_the_preset);
+  RUN_TEST(test_rate_switch_source);
 #ifdef ARDUINO
   RUN_TEST(test_nvs_round_trip);
 #endif

@@ -22,6 +22,7 @@ enum Id : uint8_t
   STEP_BEATS,
   COUNT_IN_BEATS,
   BEATS_PER_BAR,
+  RATE_PRESET,
   RATE_SLOW_MAX_CHANGE,
   RATE_SLOW_TAU_SEC,
   RATE_MEDIUM_MAX_CHANGE,
@@ -116,9 +117,12 @@ public:
 
   // Loads saved values. Values that are missing, out of range or from another
   // schema version keep their default; if the loaded set as a whole breaks a
-  // rule between parameters, all defaults are used. Returns how many values
+  // rule between parameters (a default moved in Settings.h since the save),
+  // all defaults are used and error() names the rule. Returns how many values
   // were loaded (0 = all defaults).
   int load(ParamStore &store);
+  // True when the last load() took this value from the store (it had been saved).
+  bool loadedFromStore(int id) const { return loaded_[id]; }
   // Saves the values that differ from their default and removes the others, so
   // a changed default in Settings.h still applies to values never set.
   bool save(ParamStore &store);
@@ -136,5 +140,6 @@ private:
   bool checkSet(const float *v, int id);
 
   float v_[params::COUNT];
+  bool loaded_[params::COUNT] = {};
   char err_[96] = "";
 };

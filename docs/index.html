@@ -134,6 +134,8 @@ fieldset.group, details.group { border: 1px solid var(--border); border-radius: 
 fieldset.group > legend, details.group > summary { font-weight: 650; padding: 0 .3rem; }
 details.group > summary { cursor: pointer; padding: .3rem; }
 details.group > summary .note { font-weight: 400; color: var(--muted); }
+details.group > summary .count { font-weight: 400; color: var(--warn-text); }
+details.group fieldset.group { margin: .6rem 0 .4rem; }
 .field {
   display: grid; gap: .1rem .75rem;
   grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr);
@@ -301,12 +303,22 @@ class SerialTransport {
   constructor(port) { this.port = port; this.reader = null; this.keepReading = true; this.kind = 'serial'; }
   async open() {
     await this.port.open({ baudRate: 115200, bufferSize: 8192 });
-    // DevKit: DTR/RTS drive the auto-reset circuit (would hold the board in reset).
-    try { await this.port.setSignals({ dataTerminalReady: false, requestToSend: false }); }
+    // A native USB CDC port (XIAO, Espressif VID 303A) only sends while the host
+    // has DTR set. A UART bridge (DevKit, CH343) is the opposite: there DTR/RTS
+    // drive the auto-reset circuit and would hold the board in reset.
+    this.dtr = this.isNativeUsb();
+    try { await this.setDtr(this.dtr); }
     catch (e) { console.warn('setSignals failed', e); }
     this.loopDone = this.readLoop();
   }
-  async setDtr(on) { await this.port.setSignals({ dataTerminalReady: on, requestToSend: false }); }
+  isNativeUsb() {
+    const i = this.port.getInfo ? this.port.getInfo() : {};
+    return i.usbVendorId === 0x303A;
+  }
+  async setDtr(on) {
+    await this.port.setSignals({ dataTerminalReady: on, requestToSend: false });
+    this.dtr = on;
+  }
   info() {
     const i = this.port.getInfo ? this.port.getInfo() : {};
     if (i.usbVendorId === undefined) return '';
@@ -421,6 +433,7 @@ const DEMO_DEFS = [
   ['step_beats', 'int', 16, 1, 64, 'stepped mode: beats the tempo holds (power of two)'],
   ['count_in_beats', 'int', 4, 0, 63, 'stepped mode: LED count-in beats before a step (0 = none)'],
   ['beats_per_bar', 'int', 4, 1, 16, 'transport LED: beats per bar (downbeat flash)'],
+  ['rate_preset', 'int', 0, -1, 1, 'rate preset in use: -1 slow, 0 medium, 1 fast (switch, CC 22 and set all change it)'],
   ['rate_slow_max_change', 'float', 0.00075, 0.0001, 0.02, 'rate slow: max tempo change per beat (fraction)'],
   ['rate_slow_tau_sec', 'float', 40, 1, 300, 'rate slow: heart rate smoothing time (s)'],
   ['rate_medium_max_change', 'float', 0.0015, 0.0001, 0.02, 'rate medium: max tempo change per beat (fraction)'],
@@ -511,8 +524,19 @@ class DemoTransport {
     const old = this.values[d.name];
     this.check(d, v, { ...this.values, [d.name]: v });
     this.values[d.name] = v;
-    if (old !== v) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}${source ? ' (' + source + ')' : ''}`);
+    this.changed(d, old, v, source);
     return old !== v;
+  }
+  // Logs a change like the device does; a new rate preset also changes the glide
+  changed(d, old, v, source) {
+    if (old === v) return;
+    this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}${source ? ' (' + source + ')' : ''}`);
+    if (d.name === 'rate_preset') {
+      const names = { '-1': 'slow', 0: 'medium', 1: 'fast' };
+      const pv = this.values, n = names[v];
+      this.out(`rate: ${names[old]} -> ${n} (${(pv['rate_' + n + '_max_change'] * 100).toFixed(3)} %/beat, tau ${pv['rate_' + n + '_tau_sec'].toFixed(0)} s)`);
+      this.sim.rate = v;
+    }
   }
   paramLine(d) {
     return `param ${d.name} ${d.type} ${this.format(d, this.values[d.name])} min=${this.format(d, d.min)} max=${this.format(d, d.max)} default=${this.format(d, d.def)} "${d.help}"`;
@@ -537,7 +561,7 @@ class DemoTransport {
         this.check(d, v, { ...this.values, [d.name]: v });
         this.values[d.name] = v;
         this.out(`ok ${d.name}=${this.format(d, v)}`);   // the device logs the change after the reply
-        if (old !== v) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, v)}`);
+        this.changed(d, old, v);
       } else if (cmd === 'save' && !a) {
         this.saved = { ...this.values };
         this.out('ok saved');
@@ -548,12 +572,12 @@ class DemoTransport {
           this.check(d, d.def, { ...this.values, [d.name]: d.def });
           this.values[d.name] = d.def;
           this.out(`ok ${d.name}=${this.format(d, d.def)}`);
-          if (old !== d.def) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, d.def)}`);
+          this.changed(d, old, d.def);
         } else {
           for (const d of DEMO_DEFS) {
             const old = this.values[d.name];
             this.values[d.name] = d.def;
-            if (old !== d.def) this.out(`param: ${d.name} ${this.format(d, old)} -> ${this.format(d, d.def)}`);
+            this.changed(d, old, d.def);
           }
           this.out('ok reset');
         }
@@ -573,14 +597,16 @@ class DemoTransport {
   }
   // Like a DAW knob: control CCs on channel 16 (see Settings.h)
   simulateCc() {
-    const turn = this.ccTurn++ % 2;
+    const turn = this.ccTurn++ % 3;
     const cc = Math.floor(Math.random() * 128);
     try {
       if (turn === 0) {
         this.apply(this.def('feedback_offset_bpm'), Math.fround(Math.round(cc / 127 * 100) / 10), 'cc23=' + cc);
-      } else {
+      } else if (turn === 1) {
         const v = cc < 64 ? 1 : 2;
         if (this.apply(this.def('tempo_multiplier'), v, 'cc24=' + cc)) this.out(`clock: step_beats ${this.values.step_beats}, tempo_multiplier ${v} in effect`);
+      } else {
+        this.apply(this.def('rate_preset'), cc < 43 ? -1 : cc < 86 ? 0 : 1, 'cc22=' + cc);
       }
     } catch (e) {
       this.out(`param: cc refused: ${e}`);
@@ -595,12 +621,13 @@ class DemoTransport {
     const states = ['NoSensor', 'NoFinger', 'Acquiring', 'Locked'];
     const next = s.ticks < 2 ? 1 : s.ticks < 4 ? 2 : 3;
     if (next !== s.state) { this.out(`state: ${states[s.state]} -> ${states[next]}`); s.state = next; }
-    const tau = v.rate_medium_tau_sec;
+    const preset = ['slow', 'medium', 'fast'][s.rate + 1];
+    const tau = v['rate_' + preset + '_tau_sec'];
     if (s.state >= 2) s.hr += (raw - s.hr) * (1 - Math.exp(-4 / tau));
     s.target = s.hr + s.fb * v.feedback_offset_bpm;
     if (s.state === 3) {
       const beats = s.tempo / 60 * 4;
-      const maxStep = s.tempo * v.rate_medium_max_change * beats;
+      const maxStep = s.tempo * v['rate_' + preset + '_max_change'] * beats;
       s.tempo += Math.max(-maxStep, Math.min(maxStep, s.target - s.tempo));
     }
     const clock = Math.min(240, s.tempo * v.tempo_multiplier);
@@ -612,17 +639,20 @@ class DemoTransport {
 // ---------------------------------------------------------------------------
 // Presentation hints (the form itself is built from the `get` output)
 // ---------------------------------------------------------------------------
+// The main settings are always shown, in this order; every other group sits behind "More settings"
+const MAIN = ['tempo_multiplier', 'step_beats', 'beats_per_bar', 'rate_preset', 'feedback_offset_bpm'];
 const GROUPS = [
-  { id: 'tempo', title: 'Tempo & stepping', match: (n) => ['tempo_multiplier', 'step_beats', 'count_in_beats', 'beats_per_bar', 'start_bpm'].includes(n) },
+  { id: 'main', title: 'Main settings', match: (n) => MAIN.includes(n) },
+  { id: 'tempo', title: 'Tempo & stepping', match: (n) => ['count_in_beats', 'start_bpm'].includes(n) },
   { id: 'rate', title: 'Rate presets', match: (n) => n.startsWith('rate_') },
-  { id: 'feedback', title: 'Feedback', match: (n) => n === 'feedback_offset_bpm' || n.startsWith('steer_') },
+  { id: 'feedback', title: 'Feedback steering', match: (n) => n.startsWith('steer_') },
   { id: 'leds', title: 'LEDs', match: (n) => n.startsWith('led_') || n === 'transport_led_level' || n === 'stopped_level' },
+  { id: 'filter', title: 'Heart rate filter', match: (n) => /^(caution_|gate_)/.test(n) || ['agree_tol_bpm', 'lock_timeout_polls', 'invalid_to_no_finger'].includes(n) },
   { id: 'other', title: 'Other', match: () => false },
-  { id: 'filter', title: 'Heart rate filter', advanced: true, note: 'advanced', match: (n) => /^(caution_|gate_)/.test(n) || ['agree_tol_bpm', 'lock_timeout_polls', 'invalid_to_no_finger'].includes(n) },
 ];
 const LABELS = {
   tempo_multiplier: 'Tempo multiplier', step_beats: 'Step length', count_in_beats: 'Count-in', beats_per_bar: 'Beats per bar',
-  start_bpm: 'Start tempo',
+  start_bpm: 'Start tempo', rate_preset: 'Rate preset',
   rate_slow_max_change: 'Slow: max change', rate_slow_tau_sec: 'Slow: smoothing',
   rate_medium_max_change: 'Medium: max change', rate_medium_tau_sec: 'Medium: smoothing',
   rate_fast_max_change: 'Fast: max change', rate_fast_tau_sec: 'Fast: smoothing',
@@ -669,6 +699,8 @@ const state = {
   lastLineAt: 0,
   history: [],           // { t, hr, target, tempo, clock }
   loading: false,
+  moreOpen: false,       // "More settings" stays open across a rebuild of the form
+  more: null,            // { details, count } of the "More settings" block
 };
 
 const PARAM_RE = /^param (\S+) (\S+) (\S+) min=(\S+) max=(\S+) default=(\S+) "(.*)"$/;
@@ -692,6 +724,11 @@ function setStatus(text, on) {
   dot.className = 'status-dot' + (on ? ' on' : '');
   dot.setAttribute('aria-hidden', 'true');
   $('status').append(dot, text);
+}
+
+// True when any value differs from the one last loaded from flash or saved
+function anyUnsaved() {
+  return [...state.params].some(([n, p]) => state.savedValues.get(n) !== p.value);
 }
 
 function setUnsaved(dirty) {
@@ -740,7 +777,7 @@ $('showPlot').addEventListener('change', () => {
 
 // ---------- incoming lines ----------
 device.onLine((line, kind) => {
-  state.lastLineAt = Date.now();
+  if (kind !== 'sent' && kind !== 'note') state.lastLineAt = Date.now(); // lines from the device only
   if (kind === 'sent') { log('→ ' + line, 'sent'); return; }
   if (kind === 'note') { log(line, 'note'); return; }
   if (line.startsWith('>')) { log(line, 'plot'); handlePlot(line); return; }
@@ -752,19 +789,23 @@ device.onLine((line, kind) => {
   log(line, cls);
   const m = CHANGE_RE.exec(line);
   if (m) { onExternalChange(m[1], m[3], m[4]); return; }
+  if (/^params: saved values ignored/.test(line)) {
+    // The saved set breaks a rule between values: a default in Settings.h moved since the save
+    banner('Device: ' + line.replace(/^params: /, '') + '. A default moved since the values were saved; set and save them again.', 'warn', 'loadWarn');
+  }
   if (/^params: \d+ saved value/.test(line) && state.connected && state.params.size && !state.loading) {
     // The device restarted: its values were reloaded from flash
     log('(device restarted: reloading values)', 'note');
-    loadAll();
+    loadAll({ fresh: true });
   }
 });
 
 function onExternalChange(name, value, source) {
   const p = state.params.get(name);
-  setUnsaved(true);
   if (!p) { loadAll(); return; } // a parameter we don't know yet: rebuild the form
   const changed = p.value !== value;
   p.value = value;
+  setUnsaved(anyUnsaved());
   const f = state.fields.get(name);
   if (!f) return;
   // Don't overwrite what the user is typing in this very field
@@ -884,33 +925,61 @@ function buildForm() {
   const form = $('form');
   form.innerHTML = '';
   state.fields.clear();
+  state.more = null;
   const byGroup = new Map(GROUPS.map((g) => [g.id, []]));
   for (const p of state.params.values()) {
     const g = GROUPS.find((gr) => gr.match(p.name)) || GROUPS.find((gr) => gr.id === 'other');
     byGroup.get(g.id).push(p);
   }
-  for (const g of GROUPS) {
+  byGroup.get('main').sort((a, b) => MAIN.indexOf(a.name) - MAIN.indexOf(b.name));
+  const fieldsetFor = (g, list) => {
+    const box = document.createElement('fieldset');
+    box.className = 'group';
+    const lg = document.createElement('legend'); lg.textContent = g.title; box.append(lg);
+    for (const p of list) box.append(buildField(p));
+    return box;
+  };
+  const main = byGroup.get('main');
+  if (main.length) form.append(fieldsetFor(GROUPS[0], main));
+
+  // Everything else is collapsed into one "More settings" block
+  const more = document.createElement('details');
+  more.className = 'group';
+  more.open = state.moreOpen;
+  more.addEventListener('toggle', () => { state.moreOpen = more.open; });
+  const sum = document.createElement('summary');
+  sum.append('More settings ');
+  const note = document.createElement('span'); note.className = 'note';
+  const count = document.createElement('span'); count.className = 'count';
+  sum.append(note, ' ', count);
+  more.append(sum);
+  const titles = [];
+  for (const g of GROUPS.slice(1)) {
     const list = byGroup.get(g.id);
     if (!list.length) continue;
-    let box;
-    if (g.advanced) {
-      box = document.createElement('details');
-      box.className = 'group';
-      const sum = document.createElement('summary');
-      sum.innerHTML = '';
-      sum.append(g.title + ' ');
-      const note = document.createElement('span'); note.className = 'note'; note.textContent = '(' + g.note + ')';
-      sum.append(note);
-      box.append(sum);
-    } else {
-      box = document.createElement('fieldset');
-      box.className = 'group';
-      const lg = document.createElement('legend'); lg.textContent = g.title; box.append(lg);
-    }
-    for (const p of list) box.append(buildField(p));
-    form.append(box);
+    titles.push(g.title);
+    more.append(fieldsetFor(g, list));
   }
+  note.textContent = '(' + titles.join(', ') + ')';
+  state.more = { details: more, count };
+  if (titles.length) form.append(more);
+  updateMoreSummary();
   updateControls();
+}
+
+// The collapsed "More settings" line says when something inside needs attention
+function updateMoreSummary() {
+  if (!state.more) return;
+  let changed = 0, errors = 0;
+  for (const f of state.fields.values()) {
+    if (!state.more.details.contains(f.root)) continue;
+    if (f.root.classList.contains('changed')) changed++;
+    if (f.root.classList.contains('has-error')) errors++;
+  }
+  const parts = [];
+  if (changed) parts.push(changed + ' not saved');
+  if (errors) parts.push(errors + ' with an error');
+  state.more.count.textContent = parts.length ? '· ' + parts.join(', ') : '';
 }
 
 function buildField(p) {
@@ -932,6 +1001,9 @@ function buildField(p) {
   } else if (p.name === 'step_beats' && p.type === 'int') {
     input = document.createElement('select');
     for (let v = 1; v <= max; v *= 2) if (v >= min) input.add(new Option(String(v), String(v)));
+  } else if (p.name === 'rate_preset' && p.type === 'int') {
+    input = document.createElement('select');
+    for (const [v, l] of [[-1, 'Slow'], [0, 'Medium'], [1, 'Fast']]) if (v >= min && v <= max) input.add(new Option(l, String(v)));
   } else if (p.name === 'tempo_multiplier' && p.type === 'int' && max - min <= 3) {
     input = document.createElement('select');
     for (let v = min; v <= max; v++) input.add(new Option('×' + v + (v === 1 ? ' (normal)' : v === 2 ? ' (double time)' : ''), String(v)));
@@ -1004,6 +1076,7 @@ function refreshMeta(name) {
   f.root.classList.toggle('changed', changed);
   f.meta.textContent = `Default ${p.def}${range}` + (changed ? ` · saved value ${saved} (not saved yet)` : '');
   f.derived.textContent = derivedFor(name, f.input.type === 'checkbox' ? '' : f.input.value);
+  updateMoreSummary();
 }
 function setMsg(name, text) {
   const f = state.fields.get(name);
@@ -1011,6 +1084,7 @@ function setMsg(name, text) {
   f.msg.textContent = text;
   f.root.classList.toggle('has-error', !!text);
   f.input.setAttribute('aria-invalid', text ? 'true' : 'false');
+  updateMoreSummary();
 }
 
 async function sendSet(name) {
@@ -1057,7 +1131,9 @@ function humanError(name, error) {
   return e.charAt(0).toUpperCase() + e.slice(1);
 }
 
-async function loadAll() {
+// fresh: the device's values are its saved ones (first load, device restart), so they
+// become the per-field "saved value" baseline; otherwise (Reload, restore) the baseline is kept.
+async function loadAll({ fresh = false } = {}) {
   if (state.loading) return;
   state.loading = true;
   try {
@@ -1075,11 +1151,12 @@ async function loadAll() {
     clearBanner('loadError');
     const params = new Map();
     for (const line of r.info) { const p = parseParamLine(line); if (p) params.set(p.name, p); }
+    if (fresh || !state.params.size) state.savedValues = new Map();
+    for (const [n, p] of params) if (!state.savedValues.has(n)) state.savedValues.set(n, p.value);
     state.params = params;
-    state.savedValues = new Map([...params].map(([n, p]) => [n, p.value]));
     $('intro').hidden = true;
     buildForm();
-    setUnsaved(false);
+    setUnsaved(anyUnsaved());
   } finally {
     state.loading = false;
   }
@@ -1102,12 +1179,7 @@ async function save() {
 async function restoreAll(andSave) {
   const r = await device.command('reset', { expect: /^ok reset/ });
   if (!r.ok) { banner('Restore defaults failed: ' + r.error, 'error', 'saveError'); return; }
-  const saved = state.savedValues;
-  await loadAll();
-  state.savedValues = saved;                 // still the saved values, until Save
-  for (const n of state.fields.keys()) refreshMeta(n);
-  const differs = [...state.params].some(([n, p]) => saved.get(n) !== p.value);
-  setUnsaved(differs);
+  await loadAll(); // keeps the saved values as the baseline, until Save
   if (andSave) await save();
 }
 
@@ -1135,17 +1207,19 @@ async function connect(transport) {
   log(transport.kind === 'demo' ? '(demo device connected)' : '(port opened at 115200 baud' + (info ? ', ' + info : '') + ')', 'note');
   updateControls();
   if (transport.kind === 'serial') {
+    $('dtr').checked = !!transport.dtr;
+    $('dtrWrap').hidden = false;
     const openedAt = Date.now();
     setTimeout(() => {
       if (state.connected && state.transport === transport && state.lastLineAt < openedAt) {
         $('dtrWrap').hidden = false;
         updateControls();
-        banner('No data from the device yet. On a USB CDC port (XIAO) some systems only send while DTR is set: try "Set DTR" (top right). ' +
+        banner('No data from the device yet. A native USB port (XIAO) only sends while DTR is set, a UART bridge (DevKit) needs it clear: try toggling "Set DTR" (top right). ' +
                'On the DevKit, make sure you chose the UART (CH343) port.', 'warn', 'dtrHint');
       }
     }, 2000);
   }
-  await loadAll();
+  await loadAll({ fresh: true });
 }
 
 async function disconnect() {
@@ -1161,6 +1235,14 @@ async function disconnect() {
   $('dtr').checked = false;
   updateControls();
   resetLive();
+  // Forget this device's values: the next connection starts from its device, not from here
+  state.params = new Map();
+  state.savedValues = new Map();
+  state.fields.clear();
+  $('form').innerHTML = '';
+  $('intro').hidden = false;
+  setUnsaved(false);
+  for (const id of ['loadError', 'saveError', 'loadWarn']) clearBanner(id);
 }
 
 $('connect').addEventListener('click', async () => {
@@ -1174,7 +1256,7 @@ $('disconnect').addEventListener('click', () => { clearBanner('connError'); disc
 $('dtr').addEventListener('change', async () => {
   const t = state.transport;
   if (!t || !t.setDtr) return;
-  try { await t.setDtr($('dtr').checked); log('(DTR ' + ($('dtr').checked ? 'set' : 'cleared') + ')', 'note'); clearBanner('dtrHint'); if (!state.params.size) loadAll(); }
+  try { await t.setDtr($('dtr').checked); log('(DTR ' + ($('dtr').checked ? 'set' : 'cleared') + ')', 'note'); clearBanner('dtrHint'); if (!state.params.size) loadAll({ fresh: true }); }
   catch (e) { banner('Could not change DTR: ' + e.message, 'error', 'connError'); }
 });
 $('save').addEventListener('click', save);

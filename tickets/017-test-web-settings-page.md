@@ -12,8 +12,12 @@ In Chrome or Edge, with the PlatformIO serial monitor closed (only one program c
       action.
 - [ ] [hw] Setting a value applies at once; an invalid value shows the error and restores the field.
 - [ ] [hw] The "unsaved changes" indicator appears after a change and clears after Save.
+- [ ] [hw] Reload after an unsaved change keeps the indicator and the field's "saved value" note.
+- [ ] [hw] Disconnect, then connect again: the form is empty until the device has answered `get`
+      (no values from the previous session or the demo device).
 - [ ] [hw] Saved values survive a restart of the device.
 - [ ] [hw] Restore all defaults works (with confirmation) and needs Save to be permanent.
 - [ ] [hw] The live panel shows heart rate, tempo and state while worn.
 - [ ] [hw] A CC sent from the DAW updates the matching field on the page.
-- [ ] [hw] XIAO: the same over its single USB port.
+- [ ] [hw] XIAO: the same over its single USB port. The page sets DTR by itself (checkbox top
+      right shows it checked) and the full `get` listing arrives without a timeout.
